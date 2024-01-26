@@ -53,7 +53,7 @@
 #' @export
 
 
-scenario_pm_calculations <- function(trips, Persons){
+scenario_pm_calculations <- function(trips, Persons, input_dir){
   
   # TODO: move into setting
   PM_TRANS_SHARE= 0.101
@@ -91,13 +91,12 @@ scenario_pm_calculations <- function(trips, Persons){
     speed = unlist(mode_speeds),
     PM_emission_inventory = unlist(pm_inventory),
     stringsAsFactors = F)
-
+  
   # we assume that the travel predicted by VE represents all travel in the region
   # ie, we do not need to add travel not covered in synthetic trip set
   ## adding in travel not covered in the synthetic trip set, based on distances traveled relative to car, set in VEHICLE_INVENTORY
 
   # total distance traveled by each mode
-  browser()
   distances_by_mode <- Persons[, lapply(.SD, sum, na.rm=TRUE),by=.(scenario), .SDcols=c("auto", "transit", "walk", "bike") ]
   scenarios <- distances_by_mode$scenario  # stash scenario names
   counterfactual_scenarios <- scenarios[2:length(scenarios)]  # scrub "baseline"
@@ -109,11 +108,11 @@ scenario_pm_calculations <- function(trips, Persons){
   temp_names <- names(distances_by_mode)
   temp_names <- temp_names[2:length(temp_names)]  # scrub "mode"
   setnames(distances_by_mode, temp_names, scenarios)
+  distances_by_mode$mode <- NULL
 
   # convert to data.frame for indexing
   distances_by_mode <- as.data.frame(distances_by_mode)
   rownames(distances_by_mode) <- distances_by_mode$mode
-  distances_by_mode$mode <- NULL
   
   # and now we can append to mode_inventory
   mode_inventory$total_dist <- distances_by_mode$total_dist
@@ -140,46 +139,23 @@ scenario_pm_calculations <- function(trips, Persons){
   }
   
   # Join trip_set and exponent factors df
-  browser()
-  trips <- dplyr::left_join(trips, exp_facs, 'stage_mode')
+  # first, convert mode_inventory to DT now that we no longer need index
+  mode_inventory$mode <- rownames(mode_inventory)
+  setDT(mode_inventory)
+  join_cols <- c("mode", "exp_fac")
+  trips <- trips[mode_inventory[, ..join_cols], on = .(mode)]
   
   #----
   # Dan: These new lines of code are for the ventilation rate
   # Dan: MET values for each mode/activity. These values come from the Compendium
   # Dan: Lambed told me that we need v-rates for everyone. I assigned to 
   # auto_rickshaw and other the same MET values as bus and cycle.
-  # TODO: I don't know if we should add MET values for drivers in ghost trips
-  # (bus, car, motorcycle, truck). Right now these are not included because they
-  # have participant_id = 0.
-  met_df <- data.frame(
-    stage_mode = c(
-      "car", "transit", "bike", "walk", "sleep",
-      "moderate", "vigorous", "leisure", "light_activities"
-    ),
-    met = c(
-      CAR_DRIVER_MET, PASSENGER_MET, CYCLING_MET, WALKING_MET, 0.95,
-      MODERATE_PA_MET, VIGOROUS_PA_MET,
-      SEDENTARY_ACTIVITY_MET, LIGHT_ACTIVITY_MET
-    ),
-    compendium_code = c(
-      "16010", "16016", "01011", "16060", "07030",
-      "16030", "GPAQ", "GPAQ", "05080", "05080"
-    )
-  )
-  
-  # Dan: Extract people from the synthetic population to calculate their 
-  # ventilation rates
-  people_for_vent_rates <- trip_set %>% filter(participant_id != 0) %>% 
-    distinct(participant_id, .keep_all=T) %>% 
-    dplyr::select(participant_id, age, sex)
-  
-  # Dan: Adding these new columns to the trip set
-  trip_set <- trip_set %>% 
-    left_join(people_for_vent_rates, by = 'participant_id')
+  mets <- fread(file.path(input_dir, "ithim", "mets.csv"),
+                select = c("mode", "met"))
+
   
   # Dan: Adding MET values [dimensionless] for each mode
-  trip_set <- trip_set %>% left_join(met_df %>% dplyr::select(stage_mode, met), 
-                                     by = 'stage_mode')
+  trips <- trips[mets, on = .(mode), nomatch = NULL]
   
   # Dan: Calculate new variables for each stage
   #   - vo2 = oxygen uptake [lt/min]
@@ -190,25 +166,28 @@ scenario_pm_calculations <- function(trips, Persons){
   #   - log_vent_rate = log of ventilation rate (empirical equation)
   #   - vent_rate = ventilation rate by removing the log in the empirical equation [lt/min]
   #   - v_rate = ventilation rate in different units of measurement [m3/h]
-  trip_set <- trip_set %>% 
+  browser()
+  trips <- trips %>% 
     rowwise() %>% 
     mutate(
       # Ventilation rate for travel modes
       vo2 = ecf * met * rmr, 
-      pct_vo2max = ifelse(stage_duration < 5, 100,
-                          ifelse(stage_duration > 540, 33,
-                                 121.2 - (14 * log(stage_duration)))),
+      pct_vo2max = ifelse(minutes < 5, 100,
+                          ifelse(minutes > 540, 33,
+                                 121.2 - (14 * log(minutes)))),
       upper_vo2max = vo2max * (pct_vo2max / 100),
       adj_vo2 = ifelse(vo2 > upper_vo2max, upper_vo2max, vo2),
       # Draw sample from normal distribution taking into account the variance 
       # between activities
-      e_ijk = rnorm(1, 0, sd_test_level),
-      log_vent_rate = intercept_a + (slope_b * log(adj_vo2/body_mass)) + d_k + e_ijk,
+      # FIXME: this is very slow
+      # e_ijk = rnorm(1, 0, sd_test_level),
+      log_vent_rate = intercept_a + (slope_b * log(adj_vo2/body_mass)) + d_k, #+ e_ijk,
       vent_rate = exp(log_vent_rate) * body_mass,
       v_rate = vent_rate * 60 / 1000
     )
   #----
   
+  browser()
   # Create df with scenarios and concentration
   conc_pm_df <- data.frame(scenario = unique(trip_set$scenario),
                            conc_pm = conc_pm)

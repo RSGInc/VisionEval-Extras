@@ -5,6 +5,7 @@ library(filesstrings)
 library(fields)
 library(tools)
 library(data.table)
+library(dplyr)
 library(pracma)
 source("R/HarmonizeData.R")
 source("R/GenerateScenarios.R")
@@ -56,7 +57,7 @@ trips <- trips[[1]]
 
 ### step 2: run ITHIM core
 # AP pathway
-pm_conc <- scenario_pm_calculations(trips, persons)
+pm_conc <- scenario_pm_calculations(trips, persons, input_dir)
  
 # # TODO: are these needed?
 # scenario_pm <- pm_conc$scenario_pm
