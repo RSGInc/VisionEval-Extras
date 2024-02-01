@@ -112,13 +112,22 @@ estimateVentilationRates <- function(persons, input_dir){
 
 hhsToPersons <- function(Hhs, genderRatio, input_dir){
   
+  WALK_SPEED <- 2.5
+  BIKE_SPEED <- 7.2
+  DRIVE_SPEED <- 13.8
+  
   # first, rename mode cols
   setnames(Hhs,
            c("Dvmt", "TransitTrips", "WalkPMT", "BikePMT"),
            c("auto", "transit", "walk", "bike"))
   
+  # and convert distances to duration
+  Hhs$auto <- Hhs$auto / DRIVE_SPEED * 60
+  Hhs$walk <- Hhs$walk / WALK_SPEED * 60
+  Hhs$bike <- Hhs$bike / BIKE_SPEED * 60
+  
   # melt Hh table so that each age bin is a row
-  # replace 0 with NA on the fly to so we can use na.rm in melt()
+  # replace 0 with NA onthe fly to so we can use na.rm in melt()
   persons <- melt(
     replace(Hhs, Hhs==0, NA),  # so we can use na.rm = TRUE
     id.vars=c("HhId", "Bzone"),

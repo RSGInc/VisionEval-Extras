@@ -21,7 +21,7 @@ appendCounterfactualScenario <- function(persons){
   # easiest way to integrate with ITHIM is to treat each mode as a single trip
   # so will convert persons into a quasi trips table
   trip_cols <- c("PId", "auto", "transit", "walk", "bike", "leisurePA",
-                 "body_mass", "ecf", "rmr", "vo2max",
+                 "scenario", "body_mass", "ecf", "rmr", "vo2max",
                  "intercept_a", "slope_b", "sd_test_level", "d_k"
                  )
   trips <- melt(persons[, ..trip_cols],

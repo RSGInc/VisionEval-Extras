@@ -57,13 +57,14 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   
   # TODO: move into setting
   PM_TRANS_SHARE= 0.101
+  MODERATE_PA_CONTRIBUTION = 0.5  # this seems really high?
   
   # concentration contributed by non-transport share (remains constant across the scenarios)
   background_pm <- Persons[scenario=="baseline", PM25]
   non_transport_pm <- background_pm*(1 - PM_TRANS_SHARE)
   
   # Exposure factor rate by activity (the ratio between that mode’s PM2.5 and the background’s PM2.5)
-  exp_facs <- list(
+  e_rate <- list(
     auto = 2.5, 
     transit = 1.9, 
     bike = 2.0, 
@@ -87,7 +88,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   )
   
   mode_inventory <- data.frame(
-    exp_fac = unlist(exp_facs),
+    e_rate = unlist(e_rate),
     speed = unlist(mode_speeds),
     PM_emission_inventory = unlist(pm_inventory),
     stringsAsFactors = F)
@@ -142,7 +143,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   # first, convert mode_inventory to DT now that we no longer need index
   mode_inventory$mode <- rownames(mode_inventory)
   setDT(mode_inventory)
-  join_cols <- c("mode", "exp_fac")
+  join_cols <- c("mode", "e_rate")
   trips <- trips[mode_inventory[, ..join_cols], on = .(mode)]
   
   #----
@@ -152,7 +153,6 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   # auto_rickshaw and other the same MET values as bus and cycle.
   mets <- fread(file.path(input_dir, "ithim", "mets.csv"),
                 select = c("mode", "met"))
-
   
   # Dan: Adding MET values [dimensionless] for each mode
   trips <- trips[mets, on = .(mode), nomatch = NULL]
@@ -166,67 +166,47 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   #   - log_vent_rate = log of ventilation rate (empirical equation)
   #   - vent_rate = ventilation rate by removing the log in the empirical equation [lt/min]
   #   - v_rate = ventilation rate in different units of measurement [m3/h]
-  browser()
-  trips <- trips %>% 
-    rowwise() %>% 
-    mutate(
-      # Ventilation rate for travel modes
-      vo2 = ecf * met * rmr, 
-      pct_vo2max = ifelse(minutes < 5, 100,
-                          ifelse(minutes > 540, 33,
-                                 121.2 - (14 * log(minutes)))),
-      upper_vo2max = vo2max * (pct_vo2max / 100),
-      adj_vo2 = ifelse(vo2 > upper_vo2max, upper_vo2max, vo2),
-      # Draw sample from normal distribution taking into account the variance 
-      # between activities
-      # FIXME: this is very slow
-      # e_ijk = rnorm(1, 0, sd_test_level),
-      log_vent_rate = intercept_a + (slope_b * log(adj_vo2/body_mass)) + d_k, #+ e_ijk,
-      vent_rate = exp(log_vent_rate) * body_mass,
-      v_rate = vent_rate * 60 / 1000
-    )
-  #----
+  vo2 <- trips$ecf *  trips$met * trips$rmr
+  pct_vo2max = ifelse(trips$minutes < 5, 100,
+                      ifelse(trips$minutes > 540, 33,
+                             121.2 - (14 * log(trips$minutes))))
+  upper_vo2max = trips$vo2max * (pct_vo2max / 100)
+  adj_vo2 = ifelse(vo2 > upper_vo2max, upper_vo2max, vo2)
+  e_ijk = rnorm(nrow(trips), 0, trips$sd_test_level)
+  log_vent_rate = trips$intercept_a + (trips$slope_b * log(adj_vo2/trips$body_mass)) + trips$d_k + e_ijk
+  vent_rate = exp(log_vent_rate) * trips$body_mass
   
-  browser()
-  # Create df with scenarios and concentration
-  conc_pm_df <- data.frame(scenario = unique(trip_set$scenario),
-                           conc_pm = conc_pm)
+  # append ventilation rate to trips
+  trips$v_rate = vent_rate * 60 / 1000
   
-  # Join trip_set with PM concentration df
-  trip_set <- left_join(trip_set, conc_pm_df, by = 'scenario')
+  # join PM to trips
+  cols = c("PId", "scenario", "PM25")
+  trips <- trips[Persons[, ..cols],
+                 on = .(PId, scenario),
+                 nomatch = NULL]
   
   # cubic meters of air inhaled are the product of the ventilation rate and the 
   # time (hours/60) spent travelling by that mode
-  trip_set$air_inhaled <- trip_set$stage_duration / 60 * trip_set$v_rate
+  trips$travel_air_inhaled <- trips$minutes / 60 * trips$v_rate
   
   # PM inhaled (micro grams) = duration * ventilation rate * exposure rates * concentration
-  trip_set$pm_inhaled <- trip_set$stage_duration / 60 * trip_set$v_rate * trip_set$e_rate * trip_set$conc_pm
+  trips$travel_pm_inhaled <- trips$minutes * trips$v_rate * trips$e_rate * trips$PM25
   
-  # Calculate total_travel_time_hrs of stage_duration
-  trip_set <- trip_set %>% 
-    group_by(participant_id, scenario) %>% 
-    mutate(total_travel_time_hrs = sum(stage_duration) / 60) %>% 
-    # total_typical_time_rem_hrs <- lt_sed_time_hrs + nd_time_hrs + other_time_hrs,
-    # remaining_time_hrs = 24 - total_travel_time_hrs,
-    # lt_sed_time_prop_hrs <- lt_sed_time_hrs / total_typical_time_rem_hrs * remaining_time_hrs,
-    # nd_time_prop_hrs <- nd_time_hrs / total_typical_time_rem_hrs * remaining_time_hrs,
-    # other_time_prop_hrs <- other_time_hrs / total_typical_time_rem_hrs * remaining_time_hrs) |> 
-    ungroup()
+  # roll-up to person-level
+  sum_cols <- c("minutes", "travel_air_inhaled", "travel_pm_inhaled")
+  activities <- trips[, lapply(.SD, sum, na.rm=TRUE),
+                      by=.(PId, scenario),
+                      .SDcols=sum_cols ]
   
-  
-  # Extract mets for sleep, rest, moderate and vigorous
-  sleep_met <- met_df %>% filter(stage_mode == 'sleep') %>% 
-    dplyr::select(met) %>% as.numeric()
-  rest_met <- met_df %>% filter(stage_mode == 'rest') %>% 
-    dplyr::select(met) %>% as.numeric()
-  moderate_met <- met_df %>% filter(stage_mode == 'moderate') %>% 
-    dplyr::select(met) %>% as.numeric()
-  vigorous_met <- met_df %>% filter(stage_mode == 'vigorous') %>% 
-    dplyr::select(met) %>% as.numeric()
-  leisure_met <- met_df %>% filter(stage_mode == 'leisure') %>% 
-    dplyr::select(met) %>% as.numeric()
-  light_met <- met_df %>% filter(stage_mode == 'light_activities') %>% 
-    dplyr::select(met) %>% as.numeric()
+  # and join person-level attributes stored in trips table
+  first_cols <- c(
+    "leisurePA", "PM25", "vo2max", "ecf", "rmr",
+    "intercept_a", "slope_b", "body_mass", "sd_test_level", "d_k"
+    )
+  person_attrs <- trips[, lapply(.SD, first),
+                        by=.(PId, scenario),
+                        .SDcols=first_cols]
+  activities <- activities[person_attrs, on = .(PId, scenario)]
   
   #----
   # Dan: We are saying that time spent for any person is:
@@ -246,151 +226,189 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   leisure_hours <- 3.15
   light_hours <- 10.75
   
+  # Transforming work_ltpa_marg_met to a daily value
+  daily_leisurePA = (activities$leisurePA / 60) / 7
+  
+  # Calculate time spent in moderate and vigorous activities from work_ltpa_marg_met
+  # I subtract 1 because the initial values are MET not Marginal MET
+  time_moderate = (daily_leisurePA * MODERATE_PA_CONTRIBUTION) / (mets[mode=="moderate"][, met] - 1)
+  time_vigorous = (daily_leisurePA * (1 - MODERATE_PA_CONTRIBUTION)) / (mets[mode=="vigorous"][, met] - 1)
+  
+  # Calculate known time
+  known_time = activities$minutes / 60 + time_moderate + time_vigorous
+  known_time = ifelse(known_time > 18, 18, known_time) # Just to avoid outliers
+  
+  # Calculate unknown time
+  unknown_time = 24 - known_time
+  
+  # Calculate ventilation rate for each activity (duration calculated from unknown time)
+  ## Sleep
+  sleep_duration = (unknown_time * (sleep_hours/(sleep_hours + leisure_hours + light_hours))) * 60 # In minutes
+  
+  ### Conditional to check if sleep duration is less than 6 hours
+  sleep_less_6h = ifelse(sleep_duration < (6 * 60), 1, 0)
+  
+  ### Assign 6 hours when sleep time is less than 6
+  sleep_duration = ifelse(sleep_less_6h == 1, (6 * 60), sleep_duration)
+  vo2_sleep = activities$ecf * mets[mode=="sleep"][, met] * activities$rmr
+  pct_vo2max_sleep = ifelse(sleep_duration < 5, 100,
+                            ifelse(sleep_duration > 540, 33,
+                                   121.2 - (14 * log(sleep_duration))))
+  
+  upper_vo2max_sleep = activities$vo2max * (pct_vo2max_sleep / 100)
+  adj_vo2_sleep = ifelse(vo2_sleep > upper_vo2max_sleep, 
+                         upper_vo2max_sleep, vo2_sleep)
+  
+  ### Draw sample from normal distribution taking into account the variance 
+  ### between activities
+  e_ijk_sleep = rnorm(nrow(activities), 0, activities$sd_test_level)   
+  log_vent_rate_sleep = activities$intercept_a + (
+    activities$slope_b * log(adj_vo2_sleep/activities$body_mass)
+    ) + activities$d_k + e_ijk_sleep
+  vent_rate_sleep = exp(log_vent_rate_sleep) * activities$body_mass
+  v_rate_sleep = vent_rate_sleep * 60 / 1000
+  
+  ### Calculate air and pm inhaled
+  sleep_air_inhaled = sleep_duration / 60 * v_rate_sleep
+  sleep_pm_inhaled = sleep_duration / 60 * v_rate_sleep * activities$PM25
+  
+  #### Leisure has a correction if sleep time is less than 6 hours
+  leisure_duration = ifelse(sleep_less_6h == 1,
+                            (unknown_time - 6) * (leisure_hours/(leisure_hours + light_hours)) * 60,# In minutes
+                            unknown_time * (leisure_hours/(sleep_hours + leisure_hours + light_hours))) * 60 # In minutes
+  leisure_duration = ifelse(leisure_duration < 0, 0, leisure_duration) # This happened in 35 rows out of the 132k
+  vo2_leisure = activities$ecf * mets[mode=="leisure"][, met] * activities$rmr
+  pct_vo2max_leisure = ifelse(leisure_duration < 5, 100,
+                              ifelse(leisure_duration > 540, 33,
+                                     121.2 - (14 * log(leisure_duration))))
+  upper_vo2max_leisure = activities$vo2max * (pct_vo2max_leisure / 100)
+  adj_vo2_leisure = ifelse(vo2_leisure > upper_vo2max_leisure, 
+                           upper_vo2max_leisure, vo2_leisure)
+  
+  ## Draw sample from normal distribution taking into account the variance 
+  ## between activities
+  e_ijk_leisure = rnorm(nrow(activities), 0, activities$sd_test_level)
+  log_vent_rate_leisure = activities$intercept_a + (
+    activities$slope_b * log(adj_vo2_leisure/activities$body_mass)
+    ) + activities$d_k + e_ijk_leisure
+  vent_rate_leisure = exp(log_vent_rate_leisure) * activities$body_mass
+  v_rate_leisure = vent_rate_leisure * 60 / 1000
+  
+  # Calculate air and pm inhaled
+  leisure_air_inhaled = leisure_duration / 60 * v_rate_leisure
+  leisure_pm_inhaled = leisure_duration / 60 * v_rate_leisure * activities$PM25
+  
+  ## Light activities
+  #### Light activities has a correction if sleep time is less than 6 hours
+  light_duration = ifelse(sleep_less_6h == 1,
+                          (unknown_time - 6) * (light_hours/(leisure_hours + light_hours)) * 60,# In minutes
+                          unknown_time * (light_hours/(sleep_hours + leisure_hours + light_hours))) * 60 # In minutes
+  light_duration = ifelse(light_duration < 0, 0, light_duration) # This happened in 35 rows out of the 132k
+  vo2_light = activities$ecf * mets[mode=="light_activities"][, met] * activities$rmr
+  pct_vo2max_light = ifelse(light_duration < 5, 100,
+                            ifelse(light_duration > 540, 33,
+                                   121.2 - (14 * log(light_duration))))
+  upper_vo2max_light = activities$vo2max * (pct_vo2max_light / 100)
+  adj_vo2_light = ifelse(vo2_light > upper_vo2max_light, 
+                         upper_vo2max_light, vo2_light)
+  
+  ## Draw sample from normal distribution taking into account the variance 
+  ## between activities
+  e_ijk_light = rnorm(nrow(activities), 0, activities$sd_test_level)
+  log_vent_rate_light = activities$intercept_a + (
+    activities$slope_b * log(adj_vo2_light/activities$body_mass)
+    ) + activities$d_k + e_ijk_light
+  vent_rate_light = exp(log_vent_rate_light) * activities$body_mass
+  v_rate_light = vent_rate_light * 60 / 1000
+  
+  # Calculate air and pm inhaled
+  light_air_inhaled = light_duration / 60 * v_rate_light
+  light_pm_inhaled = light_duration / 60 * v_rate_light * activities$PM25
+  
+  # Total air and pm inhaled
+  total_air_inhaled = activities$travel_air_inhaled + sleep_air_inhaled + leisure_air_inhaled + light_air_inhaled
+  total_pm_inhaled = activities$travel_pm_inhaled + sleep_pm_inhaled + leisure_pm_inhaled + light_pm_inhaled
+  
+  # Calculate pm / air ratio
+  activities$conc_pm_inhaled = total_pm_inhaled / total_air_inhaled
+  
+  # append to persons
+  join_cols <- c("PId", "scenario", "conc_pm_inhaled")
+  Persons <- Persons[activities[, ..join_cols], on = .(PId, scenario)]
+  
   # Calculate total air and pm inhaled in each person
-  synth_pop <- trip_set  %>%  
-    filter(participant_id != 0) %>% 
-    group_by(participant_id, scenario) %>% 
-    # reframe instead of summarise in the latest version
-    reframe(
-      total_travel_time_hrs = max(total_travel_time_hrs, na.rm = T),
-      travel_air_inhaled = sum(air_inhaled, na.rm = T),
-      travel_pm_inhaled = sum(pm_inhaled, na.rm = T),
-      work_ltpa_marg_met = max(work_ltpa_marg_met, na.rm=T)
-    ) %>% 
-    distinct(participant_id, scenario, .keep_all = T) %>% 
-    # Merge participant information to calculate ventilation rates for sleep and rest
-    left_join(people_for_vent_rates, by = 'participant_id') %>% 
-    # Merge scenario concentration
-    left_join(conc_pm_df, by = 'scenario') %>% 
-    # Calculate vent_rates and air inhaled in the same way as with travel modes
-    rowwise() %>% 
-    mutate(
-      # Transforming work_ltpa_marg_met to a daily value
-      daily_work_ltpa_marg_met = work_ltpa_marg_met / 7,
-      # Calculate time spent in moderate and vigorous activities from work_ltpa_marg_met
-      # I subtract 1 because the initial values are MET not Marginal MET
-      time_moderate = (daily_work_ltpa_marg_met * MODERATE_PA_CONTRIBUTION) / (moderate_met - 1),
-      time_vigorous = (daily_work_ltpa_marg_met * (1 - MODERATE_PA_CONTRIBUTION)) / (vigorous_met - 1),
-      # Calculate known time
-      known_time = total_travel_time_hrs + time_moderate + time_vigorous,
-      known_time = ifelse(known_time > 18, 18, known_time), # Just to avoid outliers
-      # Calculate unknown time
-      unknown_time = 24 - known_time,
-      
-      # Calculate ventilation rate for each activity (durations are calculated from the unknown time)
-      ## Sleep
-      sleep_duration = (unknown_time * (sleep_hours/(sleep_hours + leisure_hours + light_hours))) * 60, # In minutes
-      ### Conditional to check if sleep duration is less than 6 hours
-      sleep_less_6h = ifelse(sleep_duration < (6 * 60), 1, 0),
-      ### Assign 6 hours when sleep time is less than 6
-      sleep_duration = ifelse(sleep_less_6h == 1, (6 * 60), sleep_duration),
-      vo2_sleep = ecf * sleep_met * rmr,
-      pct_vo2max_sleep = ifelse(sleep_duration < 5, 100,
-                                ifelse(sleep_duration > 540, 33,
-                                       121.2 - (14 * log(sleep_duration)))),
-      upper_vo2max_sleep = vo2max * (pct_vo2max_sleep / 100),
-      adj_vo2_sleep = ifelse(vo2_sleep > upper_vo2max_sleep, 
-                             upper_vo2max_sleep, vo2_sleep),
-      ### Draw sample from normal distribution taking into account the variance 
-      ### between activities
-      e_ijk_sleep = rnorm(1, 0, sd_test_level),
-      log_vent_rate_sleep = intercept_a + (slope_b * log(adj_vo2_sleep/body_mass)) + d_k + e_ijk_sleep,
-      vent_rate_sleep = exp(log_vent_rate_sleep) * body_mass,
-      v_rate_sleep = vent_rate_sleep * 60 / 1000,
-      ### Calculate air and pm inhaled
-      sleep_air_inhaled = sleep_duration / 60 * v_rate_sleep,
-      sleep_pm_inhaled = sleep_duration / 60 * v_rate_sleep * conc_pm,
-      
-      
-      ## Leisure sedentary screen time
-      #### Leisure has a correction if sleep time is less than 6 hours
-      leisure_duration = ifelse(sleep_less_6h == 1,
-                                (unknown_time - 6) * (leisure_hours/(leisure_hours + light_hours)) * 60,# In minutes
-                                unknown_time * (leisure_hours/(sleep_hours + leisure_hours + light_hours))) * 60, # In minutes
-      leisure_duration = ifelse(leisure_duration < 0, 0, leisure_duration), # This happened in 35 rows out of the 132k
-      vo2_leisure = ecf * leisure_met * rmr,
-      pct_vo2max_leisure = ifelse(leisure_duration < 5, 100,
-                                  ifelse(leisure_duration > 540, 33,
-                                         121.2 - (14 * log(leisure_duration)))),
-      upper_vo2max_leisure = vo2max * (pct_vo2max_leisure / 100),
-      adj_vo2_leisure = ifelse(vo2_leisure > upper_vo2max_leisure, 
-                               upper_vo2max_leisure, vo2_leisure),
-      ## Draw sample from normal distribution taking into account the variance 
-      ## between activities
-      e_ijk_leisure = rnorm(1, 0, sd_test_level),
-      log_vent_rate_leisure = intercept_a + (slope_b * log(adj_vo2_leisure/body_mass)) + d_k + e_ijk_leisure,
-      vent_rate_leisure = exp(log_vent_rate_leisure) * body_mass,
-      v_rate_leisure = vent_rate_leisure * 60 / 1000,
-      # Calculate air and pm inhaled
-      leisure_air_inhaled = leisure_duration / 60 * v_rate_leisure,
-      leisure_pm_inhaled = leisure_duration / 60 * v_rate_leisure * conc_pm,
-      
-      
-      ## Light activities
-      #### Light activities has a correction if sleep time is less than 6 hours
-      light_duration = ifelse(sleep_less_6h == 1,
-                              (unknown_time - 6) * (light_hours/(leisure_hours + light_hours)) * 60,# In minutes
-                              unknown_time * (light_hours/(sleep_hours + leisure_hours + light_hours))) * 60, # In minutes
-      light_duration = ifelse(light_duration < 0, 0, light_duration), # This happened in 35 rows out of the 132k
-      vo2_light = ecf * light_met * rmr,
-      pct_vo2max_light = ifelse(light_duration < 5, 100,
-                                ifelse(light_duration > 540, 33,
-                                       121.2 - (14 * log(light_duration)))),
-      upper_vo2max_light = vo2max * (pct_vo2max_light / 100),
-      adj_vo2_light = ifelse(vo2_light > upper_vo2max_light, 
-                             upper_vo2max_light, vo2_light),
-      ## Draw sample from normal distribution taking into account the variance 
-      ## between activities
-      e_ijk_light = rnorm(1, 0, sd_test_level),
-      log_vent_rate_light = intercept_a + (slope_b * log(adj_vo2_light/body_mass)) + d_k + e_ijk_light,
-      vent_rate_light = exp(log_vent_rate_light) * body_mass,
-      v_rate_light = vent_rate_light * 60 / 1000,
-      # Calculate air and pm inhaled
-      light_air_inhaled = light_duration / 60 * v_rate_light,
-      light_pm_inhaled = light_duration / 60 * v_rate_light * conc_pm,
-      
-      # Total air and pm inhaled
-      total_air_inhaled = travel_air_inhaled + sleep_air_inhaled + leisure_air_inhaled + light_air_inhaled,
-      total_pm_inhaled = travel_pm_inhaled + sleep_pm_inhaled + leisure_pm_inhaled + light_pm_inhaled,
-      
-      # Calculate pm / air ratio
-      conc_pm_inhaled = total_pm_inhaled / total_air_inhaled
-    ) 
-  
   # Change to wide format
-  synth_pop <- synth_pop %>% 
-    dplyr::select(participant_id, scenario, conc_pm_inhaled) %>% 
-    pivot_wider(names_from = 'scenario', values_from = 'conc_pm_inhaled') %>% 
-    # Rename columns
-    rename_at(vars(starts_with(c("base", "sc"))), 
-              ~ paste0("pm_conc_", SCEN_SHORT_NAME))
+  pm_exp <- Persons %>% 
+    dplyr::select(PId, scenario, conc_pm_inhaled) %>% 
+    pivot_wider(names_from = 'scenario', values_from = 'conc_pm_inhaled')
   
-  # Get all participants without any travel (in the travel survey)
-  id_wo_travel <- SYNTHETIC_POPULATION |> 
-    filter(!participant_id %in% trip_set$participant_id)
+  # pm_conc prefix for each scenario
+  pm_colnames <- paste('pm_conc', scenarios, sep = '_')
+  setDT(pm_exp)
+  setnames(pm_exp, scenarios, pm_colnames)
   
-  # Assign all participants without travel baseline + scenario specific base concentration
-  id_wo_travel <- cbind(id_wo_travel |> 
-                          dplyr::select(-work_ltpa_marg_met), conc_pm_df |> 
-                          pivot_wider(names_from = "scenario", values_from = "conc_pm"))
-  # Rename columns
-  id_wo_travel <- id_wo_travel |> 
-    rename_at(vars(starts_with(c("base", "sc"))), 
-              ~ paste0("pm_conc_", SCEN_SHORT_NAME))
-  
-  # Join demographics info from trip_set 
-  synth_pop <- left_join(trip_set |> 
-                           filter(participant_id != 0) |> 
-                           dplyr::select(participant_id, age, sex, age_cat) |> 
-                           distinct(), 
-                         synth_pop, by = 'participant_id')
-  
-  # Combine people with and without trips
-  synth_pop <- dplyr::bind_rows(synth_pop, id_wo_travel)
-  
-  # Convert data type to integer
-  synth_pop$participant_id <- as.integer(synth_pop$participant_id)
+  # Join person info to pm_exp
+  join_cols <- c("PId", "age", "sex")
+  pm_exp <- pm_exp[Persons[scenario=="baseline", ..join_cols], on = .(PId)]
   
   # Return list with concentration and per person PM2.5 exposure (unit: ug/m3)
-  list(scenario_pm = conc_pm, pm_conc_pp = as.data.frame(synth_pop))
+  return(list(pm_exp, scenarios))
 }
+
+
+total_mmet <- function(persons, trips, scenarios, input_dir) {
+  
+  # read mets
+  mets <- fread(file.path(input_dir, "ithim", "mets.csv"),
+                select = c("mode", "met"))
+  
+  # extract all people from the trip set with an active travel (walk or cycle) stage mode
+  active_modes <- c("walk", "bike")
+  rd_pa <- trips[trips$mode %in% active_modes]
+
+  # Scale trip duration to entire week
+  rd_pa$weekly_hrs <- rd_pa$minutes / 60 * 7
+  
+  # convert leisure PA to marginal mets
+  agg_cols <- c("leisurePA")
+  mmets <- rd_pa[, lapply(.SD, first),
+                 by=.(PId, scenario),
+                 .SDcols=agg_cols ]
+  mmets$mmet <- mmets$leisurePA / 60 * (mets[mode=="moderate"][, met] - 1)
+  
+  # walking mets
+  agg_cols <- c("weekly_hrs")
+  walk_mmet <- rd_pa[mode=="walk"][, lapply(.SD, sum, na.rm=TRUE),
+                                   by=.(PId, scenario),
+                                   .SDcols=agg_cols ]
+  walk_mmet$mmet <- walk_mmet$weekly_hrs * (mets[mode=="walk"][, met] - 1)
+  
+  # biking mets
+  bike_mmet <- rd_pa[mode=="bike"][, lapply(.SD, sum, na.rm=TRUE),
+                                   by=.(PId, scenario),
+                                   .SDcols=agg_cols ]
+  bike_mmet$mmet <- bike_mmet$weekly_hrs * (mets[mode=="bike"][, met] - 1)
+  
+  # sum mets across activity types
+  mmets$walk_mmets <- walk_mmet$mmet
+  mmets$bike_mmets <- bike_mmet$mmet
+  mmets$total_mmets <- mmets$mmet + walk_mmet$mmet + bike_mmet$mmet
+  
+  # Calculate total air and pm inhaled in each person
+  # Change to wide format
+  mmets <- mmets %>% 
+    dplyr::select(PId, scenario, total_mmets) %>% 
+    pivot_wider(names_from = 'scenario', values_from = 'total_mmets')
+  
+  # pm_conc prefix for each scenario
+  pa_colnames <- paste('mmet', scenarios, sep = '_')
+  setDT(mmets)
+  setnames(mmets, scenarios, pa_colnames)
+  
+  # Join person info to pm_exp
+  join_cols <- c("PId", "age", "sex")
+  mmets <- mmets[persons[scenario=="baseline", ..join_cols], on = .(PId)]
+  
+  return(mmets)
+}
+
