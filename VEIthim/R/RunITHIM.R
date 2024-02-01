@@ -91,7 +91,7 @@ hb_AP_PA <- health_burden(ind_ap_pa = RR_PA_AP_calculations, module_dir, input_d
 
 # crash pathway
 injuryTables <- prepareCrashData(persons, trips, module_dir)
-get_all_distances(trips, persons, scenarios)
+get_all_distances(injuryTables, trips, persons, scenarios)
 
 # summary
 
