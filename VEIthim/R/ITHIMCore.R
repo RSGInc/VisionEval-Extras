@@ -85,21 +85,16 @@ developModeInventory <- function(settings){
     PM_emission_inventory = unlist(pm_inventory),
     stringsAsFactors = F)
   
-  browser()
   return(mode_inventory)
 }
 
 
 scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   
-  # TODO: move into setting
-  browser()
-  MODERATE_PA_CONTRIBUTION = 0.5  # this seems really high?
-  
   # concentration contributed by non-transport share
   # remains constant across the scenarios
   background_pm <- Persons$persons[scenario=="baseline", PM25]
-  non_transport_pm <- background_pm*(1 - settings[name=="pm_transportation_share"]$value)
+  non_transport_pm <- background_pm*(1 - settings[name=="pm_trans_share"]$value)
   mode_inventory <- developModeInventory(settings)
   
   # we assume travel predicted by VE represents all travel in the region
@@ -146,10 +141,10 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   baseline_pm <- sum(trans_emissions["baseline"], na.rm = T)
   
   # in this sum, the non-transport pm is constant
-  # the transport emissions scale the transport contribution (PM_TRANS_SHARE) to the base level (PM_CONC_BASE)
+  # the transport emissions scale the transport contribution (pm_trans_share) to the base level (PM_CONC_BASE)
   for(counterfactual in counterfactual_scenarios){
     Persons$persons[scenario==counterfactual, "PM25"] <- 
-      non_transport_pm + PM_TRANS_SHARE * background_pm * sum(trans_emissions[[counterfactual]], na.rm = T)/baseline_pm
+      non_transport_pm + settings[name=="pm_trans_share"]$value * background_pm * sum(trans_emissions[[counterfactual]], na.rm = T)/baseline_pm
   }
   
   # Join trip_set and exponent factors df
