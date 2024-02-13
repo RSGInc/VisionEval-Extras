@@ -53,38 +53,30 @@
 #' @export
 
 
-scenario_pm_calculations <- function(trips, Persons, input_dir){
-  
-  # TODO: move into setting
-  PM_TRANS_SHARE= 0.101
-  MODERATE_PA_CONTRIBUTION = 0.5  # this seems really high?
-  
-  # concentration contributed by non-transport share (remains constant across the scenarios)
-  background_pm <- Persons[scenario=="baseline", PM25]
-  non_transport_pm <- background_pm*(1 - PM_TRANS_SHARE)
+developModeInventory <- function(settings){
   
   # Exposure factor rate by activity (the ratio between that mode’s PM2.5 and the background’s PM2.5)
   e_rate <- list(
-    auto = 2.5, 
-    transit = 1.9, 
-    bike = 2.0, 
-    walk = 1.6
+    auto = settings[name=="e_rate_auto"]$value, 
+    transit = settings[name=="e_rate_transit"]$value, 
+    bike = settings[name=="e_rate_bike"]$value, 
+    walk = settings[name=="e_rate_walk"]$value
   )
   
   # add mode speeds
   mode_speeds <- list(
-    auto = 14.4,
-    transit = 10, 
-    bike = 7.2,
-    walk = 2.5
-    )
+    auto = settings[name=="speed_auto"]$value, 
+    transit = settings[name=="speed_transit"]$value, 
+    bike = settings[name=="speed_bike"]$value, 
+    walk = settings[name=="speed_walk"]$value
+  )
   
   # and pm emissions inventory values
   pm_inventory <- list(
-    auto = 0.081980353,
-    transit = 0.122466774, 
-    bike = 0,
-    walk = 0
+    auto = settings[name=="pm_inventory_auto"]$value,
+    transit = settings[name=="pm_inventory_transit"]$value,
+    bike = settings[name=="pm_inventory_bike"]$value,
+    walk = settings[name=="pm_inventory_walk"]$value
   )
   
   mode_inventory <- data.frame(
@@ -93,35 +85,55 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
     PM_emission_inventory = unlist(pm_inventory),
     stringsAsFactors = F)
   
-  # we assume that the travel predicted by VE represents all travel in the region
-  # ie, we do not need to add travel not covered in synthetic trip set
-  ## adding in travel not covered in the synthetic trip set, based on distances traveled relative to car, set in VEHICLE_INVENTORY
+  browser()
+  return(mode_inventory)
+}
 
+
+scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
+  
+  # TODO: move into setting
+  browser()
+  MODERATE_PA_CONTRIBUTION = 0.5  # this seems really high?
+  
+  # concentration contributed by non-transport share
+  # remains constant across the scenarios
+  background_pm <- Persons$persons[scenario=="baseline", PM25]
+  non_transport_pm <- background_pm*(1 - settings[name=="pm_transportation_share"]$value)
+  mode_inventory <- developModeInventory(settings)
+  
+  # we assume travel predicted by VE represents all travel in the region
+  # ie, we do not need to add travel not covered in synthetic trip set
   # total distance traveled by each mode
-  distances_by_mode <- Persons[, lapply(.SD, sum, na.rm=TRUE),by=.(scenario), .SDcols=c("auto", "transit", "walk", "bike") ]
+  dist_cols <- c("auto_dist", "transit_dist", "walk_dist", "bike_dist")
+  distances_by_mode <- Persons$persons[, lapply(.SD, sum, na.rm=TRUE),
+                                       by=.(scenario),
+                                       .SDcols=dist_cols]
   scenarios <- distances_by_mode$scenario  # stash scenario names
   counterfactual_scenarios <- scenarios[2:length(scenarios)]  # scrub "baseline"
   distances_by_mode <- transpose(
-    distances_by_mode[, c("auto", "transit", "walk", "bike")],
+    distances_by_mode[, ..dist_cols],
     keep.names = "mode")
+  distances_by_mode$mode <- gsub("_dist", "", distances_by_mode$mode)  # clean up mode names
   
   # transpose creates temporary names we want to replace
   temp_names <- names(distances_by_mode)
   temp_names <- temp_names[2:length(temp_names)]  # scrub "mode"
   setnames(distances_by_mode, temp_names, scenarios)
-  distances_by_mode$mode <- NULL
 
   # convert to data.frame for indexing
   distances_by_mode <- as.data.frame(distances_by_mode)
   rownames(distances_by_mode) <- distances_by_mode$mode
+  distances_by_mode$mode <- NULL
   
   # and now we can append to mode_inventory
-  mode_inventory$total_dist <- distances_by_mode$total_dist
+  mode_inventory$total_dist <- distances_by_mode$baseline
 
-  ## get emission factor by dividing inventory by baseline distance. (We don't need to scale to a whole year, as we are just scaling the background concentration.)
+  # get emission factor by dividing inventory by baseline distance
+  # We don't need to scale to a whole year, as we are just scaling the background concentration
   # this is just emission inventory divided by total travel
-  baseline_emission_factors <- mode_inventory$PM_emission_inventory / distances_by_mode$baseline
-  trans_emissions <- distances_by_mode[scenarios] * t(repmat(baseline_emission_factors, length(scenarios), 1))
+  baseline_emfacs <- mode_inventory$PM_emission_inventory / distances_by_mode$baseline
+  trans_emissions <- distances_by_mode[scenarios] * t(repmat(baseline_emfacs, length(scenarios), 1))
   
   # TODO: figure out something more elegant
   # transit emissions shouldn't scale directly with transit trips (i.e., based on service, not person-trips)
@@ -130,12 +142,13 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
     trans_emissions["transit" , counterfactual] <- trans_emissions["transit" , "baseline"]
   }
   
-  ## scenario travel pm2.5 calculated as relative to the baseline
+  # scenario travel pm2.5 calculated as relative to the baseline
   baseline_pm <- sum(trans_emissions["baseline"], na.rm = T)
   
-  ## in this sum, the non-transport pm is constant; the transport emissions scale the transport contribution (PM_TRANS_SHARE) to the base level (PM_CONC_BASE)
+  # in this sum, the non-transport pm is constant
+  # the transport emissions scale the transport contribution (PM_TRANS_SHARE) to the base level (PM_CONC_BASE)
   for(counterfactual in counterfactual_scenarios){
-    Persons[scenario==counterfactual, "PM25"] <- 
+    Persons$persons[scenario==counterfactual, "PM25"] <- 
       non_transport_pm + PM_TRANS_SHARE * background_pm * sum(trans_emissions[[counterfactual]], na.rm = T)/baseline_pm
   }
   
@@ -149,13 +162,12 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   #----
   # Dan: These new lines of code are for the ventilation rate
   # Dan: MET values for each mode/activity. These values come from the Compendium
-  # Dan: Lambed told me that we need v-rates for everyone. I assigned to 
-  # auto_rickshaw and other the same MET values as bus and cycle.
   mets <- fread(file.path(input_dir, "ithim", "mets.csv"),
                 select = c("mode", "met"))
   
   # Dan: Adding MET values [dimensionless] for each mode
   trips <- trips[mets, on = .(mode), nomatch = NULL]
+  trips <- trips[Persons$ventRates, on = .(PId), nomatch = NULL]
   
   # Dan: Calculate new variables for each stage
   #   - vo2 = oxygen uptake [lt/min]
@@ -166,6 +178,8 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   #   - log_vent_rate = log of ventilation rate (empirical equation)
   #   - vent_rate = ventilation rate by removing the log in the empirical equation [lt/min]
   #   - v_rate = ventilation rate in different units of measurement [m3/h]
+  
+  # TODO: trips needs body_mass, ecf, rmr, vo2max, intercept_a, slope_b, sd_test_level, d_k
   vo2 <- trips$ecf *  trips$met * trips$rmr
   pct_vo2max = ifelse(trips$minutes < 5, 100,
                       ifelse(trips$minutes > 540, 33,
@@ -177,15 +191,16 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   vent_rate = exp(log_vent_rate) * trips$body_mass
   
   # append ventilation rate to trips
+  # this all we need to carry forward
   trips$v_rate = vent_rate * 60 / 1000
   
   # join PM to trips
   cols = c("PId", "scenario", "PM25")
-  trips <- trips[Persons[, ..cols],
+  trips <- trips[Persons$persons[, ..cols],
                  on = .(PId, scenario),
                  nomatch = NULL]
   
-  # cubic meters of air inhaled are the product of the ventilation rate and the 
+  # cubic meters of air inhaled are the product oftri the ventilation rate and the 
   # time (hours/60) spent travelling by that mode
   trips$travel_air_inhaled <- trips$minutes / 60 * trips$v_rate
   
@@ -226,13 +241,13 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   leisure_hours <- 3.15
   light_hours <- 10.75
   
-  # Transforming work_ltpa_marg_met to a daily value
+  # Transforming leisurePA to a daily value
   daily_leisurePA = (activities$leisurePA / 60) / 7
   
-  # Calculate time spent in moderate and vigorous activities from work_ltpa_marg_met
-  # I subtract 1 because the initial values are MET not Marginal MET
-  time_moderate = (daily_leisurePA * MODERATE_PA_CONTRIBUTION) / (mets[mode=="moderate"][, met] - 1)
-  time_vigorous = (daily_leisurePA * (1 - MODERATE_PA_CONTRIBUTION)) / (mets[mode=="vigorous"][, met] - 1)
+  # Calculate time spent in moderate and vigorous activities from leisurePA
+  moderate_pa_contribution <- settings[name=="moderate_pa_contribution"]$value
+  time_moderate = (daily_leisurePA * moderate_pa_contribution) / (mets[mode=="moderate"][, met] - 1)  # to marginal METs
+  time_vigorous = (daily_leisurePA * (1 - moderate_pa_contribution)) / (mets[mode=="vigorous"][, met] - 1)
   
   # Calculate known time
   known_time = activities$minutes / 60 + time_moderate + time_vigorous
@@ -247,7 +262,6 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   
   ### Conditional to check if sleep duration is less than 6 hours
   sleep_less_6h = ifelse(sleep_duration < (6 * 60), 1, 0)
-  
   ### Assign 6 hours when sleep time is less than 6
   sleep_duration = ifelse(sleep_less_6h == 1, (6 * 60), sleep_duration)
   vo2_sleep = activities$ecf * mets[mode=="sleep"][, met] * activities$rmr
@@ -334,11 +348,12 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   
   # append to persons
   join_cols <- c("PId", "scenario", "conc_pm_inhaled")
-  Persons <- Persons[activities[, ..join_cols], on = .(PId, scenario)]
+  Persons$persons <- Persons$persons[activities[, ..join_cols],
+                                     on = .(PId, scenario)]
   
   # Calculate total air and pm inhaled in each person
   # Change to wide format
-  pm_exp <- Persons %>% 
+  pm_exp <- Persons$persons %>% 
     dplyr::select(PId, scenario, conc_pm_inhaled) %>% 
     pivot_wider(names_from = 'scenario', values_from = 'conc_pm_inhaled')
   
@@ -349,10 +364,11 @@ scenario_pm_calculations <- function(trips, Persons, input_dir){
   
   # Join person info to pm_exp
   join_cols <- c("PId", "age", "sex")
-  pm_exp <- pm_exp[Persons[scenario=="baseline", ..join_cols], on = .(PId)]
+  pm_exp <- pm_exp[Persons$persons[scenario=="baseline", ..join_cols],
+                   on = .(PId)]
   
-  # Return list with concentration and per person PM2.5 exposure (unit: ug/m3)
-  return(list(pm_exp, scenarios))
+  # return pm_exp; per person PM2.5 exposure (unit: ug/m3)
+  return(pm_exp)
 }
 
 
@@ -405,10 +421,9 @@ total_mmet <- function(persons, trips, scenarios, input_dir) {
   setDT(mmets)
   setnames(mmets, scenarios, pa_colnames)
   
-  # Join person info to pm_exp
+  # Join person info to mmets
   join_cols <- c("PId", "age", "sex")
-  mmets <- mmets[persons[scenario=="baseline", ..join_cols], on = .(PId)]
-  
+  mmets <- mmets[persons$persons[scenario=="baseline", ..join_cols], on = .(PId)]
   return(mmets)
 }
 

@@ -88,7 +88,7 @@ estimateVentilationRates <- function(persons, input_dir){
   
   # Dan: Calculate the maximum oxygen uptake rate [lt/min] of each person in the
   # synthetic population
-  body_mass <- body_mass %>% mutate(vo2max = nvo2max * body_mass)
+  body_mass$vo2max <- body_mass$nvo2max * body_mass$body_mass
   
   # Dan: Get the parameters for the empirical equation to calculate the
   # Ventilation Rate from Oxygen Uptake Rate in each person in the
@@ -102,29 +102,25 @@ estimateVentilationRates <- function(persons, input_dir){
       d_k = rnorm(1, 0, sd_person_level)
     ) %>%
     dplyr::select(
-      PId, body_mass, ecf, rmr, nvo2max, vo2max,
-      intercept_a, slope_b, sd_person_level, sd_test_level, d_k
+      PId, body_mass, ecf, rmr, vo2max, intercept_a, slope_b, sd_test_level, d_k
     )
   
-  return(body_mass)
+  return(setDT(body_mass))
 }
 
 
-hhsToPersons <- function(Hhs, genderRatio, input_dir){
-  
-  WALK_SPEED <- 2.5
-  BIKE_SPEED <- 7.2
-  DRIVE_SPEED <- 13.8
-  
+hhsToPersons <- function(Hhs, input_dir, settings){
+
   # first, rename mode cols
   setnames(Hhs,
-           c("Dvmt", "TransitTrips", "WalkPMT", "BikePMT"),
-           c("auto", "transit", "walk", "bike"))
+           c("Dvmt", "TransitPMT", "WalkPMT", "BikePMT"),
+           c("auto_dist", "transit_dist", "walk_dist", "bike_dist"))
   
   # and convert distances to duration
-  Hhs$auto <- Hhs$auto / DRIVE_SPEED * 60
-  Hhs$walk <- Hhs$walk / WALK_SPEED * 60
-  Hhs$bike <- Hhs$bike / BIKE_SPEED * 60
+  Hhs$auto_minutes <- Hhs$auto_dist / settings[name=="speed_auto"]$value * 60
+  Hhs$transit_minutes <- Hhs$transit_dist / settings[name=="speed_transit"]$value * 60
+  Hhs$walk_minutes <- Hhs$walk_dist / settings[name=="speed_walk"]$value * 60
+  Hhs$bike_minutes <- Hhs$bike_dist / settings[name=="speed_bike"]$value * 60
   
   # melt Hh table so that each age bin is a row
   # replace 0 with NA onthe fly to so we can use na.rm in melt()
@@ -137,7 +133,11 @@ hhsToPersons <- function(Hhs, genderRatio, input_dir){
     na.rm = TRUE)
   
   # we need to join a few items back to persons from hh table
-  join_cols <- c("HhId", "HhSize", "auto", "transit", "walk", "bike")
+  join_cols <- c(
+    "HhId", "HhSize",
+    "auto_dist", "transit_dist", "walk_dist", "bike_dist",
+    "auto_minutes", "transit_minutes", "walk_minutes", "bike_minutes"
+    )
   persons <- persons[Hhs[, ..join_cols], on = .(HhId)]
   
   # now, each person becomes a row
@@ -160,8 +160,9 @@ hhsToPersons <- function(Hhs, genderRatio, input_dir){
   # next, assign gender to each person based on global gender ratio
   # for now, we're not going to worry about gender distribution within Hhs
   # in the future, we should do this more carefully
-  values = c('male', 'female')
-  weights = c(genderRatio, 1 - genderRatio)
+  values <- c('male', 'female')
+  genderRatio <- settings[name=="gender_ratio"]$value
+  weights <- c(genderRatio, 1 - genderRatio)
   persons$sex <- sample(
     values,
     size=nrow(persons),
@@ -172,60 +173,68 @@ hhsToPersons <- function(Hhs, genderRatio, input_dir){
   persons$PId <- 1:nrow(persons)
   
   # estimate ventilation rates and join to persons
-  body_mass <- estimateVentilationRates(persons, input_dir)
-  persons <- persons[setDT(body_mass), on = c('PId'), nomatch = NULL][order(PId)]
+  ventilationRates <- estimateVentilationRates(persons, input_dir)
   
   # finally, decompose Hh travel totals to individuals
   # for now, just distribute equally across Hh members
   # in the future, we should do this more carefully
-  travel_cols = c("auto", "transit", "walk", "bike")
+  travel_cols = c(
+    "auto_dist", "transit_dist", "walk_dist", "bike_dist",
+    "auto_minutes", "transit_minutes", "walk_minutes", "bike_minutes"
+    )
   for (col in travel_cols) {
     replacement_values <- persons[, ..col] / persons$HhSize
     persons[, (col) := replacement_values]
   }
   
-  # clean up schema and return persons df
+  # clean up schema and return list of persons, ventilation rates
   scrub <- c("ageBin", "HhSize", "minAge", "maxAge")
   persons[ ,(scrub) := NULL]  # in-place
-  return(persons)
+  return(list(persons = persons, ventRates = ventilationRates))
 }
 
 
-appendZoneAttributesToPersons <- function(Persons, zonePM, zonePA, year){
+appendZoneAttributes <- function(persons, year, input_dir){
   
-  # join background PM2.5 to Persons table
+  # loads bzone PM, PA estimates
+  zonePM <- fread(file.path(input_dir, "bzone_pm.csv"))
+  setnames(zonePM, c("Geo"), c("Bzone"))
+  zonePA <- fread(file.path(input_dir, "bzone_pa.csv"))
+  setnames(zonePA, c("Geo"), c("Bzone"))
+  
+  # join background PM2.5 to persons table
   # from Bzones
   join_cols <- c("Bzone", "PM25")
-  Persons <- Persons[zonePM[zonePM$Year == year][, ..join_cols],
+  persons <- persons[zonePM[zonePM$Year == year][, ..join_cols],
                      on = .(Bzone),
                      nomatch = NULL]
   
-  # join background PA to Persons table
+  # join background PA to persons table
   # from Bzones
   join_cols <- c("Bzone", "pa0", "pa1", "pa2", "pa3")
-  Persons <- Persons[zonePA[zonePA$Year == year][, ..join_cols],
+  persons <- persons[zonePA[zonePA$Year == year][, ..join_cols],
                      on = .(Bzone),
                      nomatch = NULL]
   
   # background PA is a distribution, so assign a value to each person
   prob_samp <- function(x) sample.int(n=4, size=1, prob=x) # from jay.sf
-  Persons[, pa_group := apply(.SD, 1, prob_samp), .SDcols=c("pa0", "pa1", "pa2", "pa3")]
+  persons[, pa_group := apply(.SD, 1, prob_samp), .SDcols=c("pa0", "pa1", "pa2", "pa3")]
   
   # now that we have a bin for each person, assign min/max PA values
-  Persons$minPA <- 0
-  Persons$maxPA <- 39
-  Persons[pa_group == 2, c("minPA", "maxPA") := list(40, 74)]  # in-place
-  Persons[pa_group == 3, c("minPA", "maxPA") := list(75, 149)]
-  Persons[pa_group == 4, c("minPA", "maxPA") := list(150, 225)]
+  persons$minPA <- 0
+  persons$maxPA <- 39
+  persons[pa_group == 2, c("minPA", "maxPA") := list(40, 74)]  # in-place
+  persons[pa_group == 3, c("minPA", "maxPA") := list(75, 149)]
+  persons[pa_group == 4, c("minPA", "maxPA") := list(150, 225)]
 
   # TODO: this is a little slow
-  Persons$leisurePA <- mapply(
+  persons$leisurePA <- mapply(
     function(x, y) sample(seq(x, y), 1), 
-    Persons$minPA, Persons$maxPA)
+    persons$minPA, persons$maxPA)
   
   # clean up schema and return persons df
   scrub <- c("pa0", "pa1", "pa2", "pa3", "pa_group", "minPA", "maxPA")
-  Persons[ ,(scrub) := NULL]  # in-place
-  return(Persons)
+  persons[ ,(scrub) := NULL]  # in-place
+  return(persons)
 }
   

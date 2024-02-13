@@ -8,6 +8,7 @@ library(data.table)
 library(dplyr)
 library(pracma)
 library(tidyr)
+source("R/LoadSettings.R")
 source("R/HarmonizeData.R")
 source("R/GenerateScenarios.R")
 source("R/ITHIMCore.R")
@@ -16,22 +17,17 @@ source("R/HealthBurden.R")
 source("R/Crashes.R")
 
 
-# params
-gender_ratio <- 0.50  # M:F gender ratio
-
 # path to completed VE model run csvs
 ve_dir <- file.path("C:", "VisionEval-Dev", "built", "visioneval", "4.2.3", "runtime")
 model_dir <- file.path(ve_dir, "models", "VERSPM-metro-reference")
 output_dir <- file.path(model_dir, "results", "output", "VERSPM-metro-reference_CSV_202401030956")
 module_dir <- file.path(getwd(), "inst", "extdata")
-files <- Sys.glob(file.path(output_dir, "Household_*"))
 
-# path to ITHIM data inputs (Bzone PM, PA estimates)
-input_dir <- file.path(ve_dir, "models", "VERSPM-metro-reference", "inputs")
-zonePM <- fread(file.path(input_dir, "bzone_pm.csv"))
-setnames(zonePM, c("Geo"), c("Bzone"))
-zonePA <- fread(file.path(input_dir, "bzone_pa.csv"))
-setnames(zonePA, c("Geo"), c("Bzone"))
+# load ithim settings
+settings <- loadSettings(module_dir)
+
+# path to completed VE model run csvs
+files <- Sys.glob(file.path(output_dir, "Household_*"))
 
 # parse years from output dir
 getYear <- function(item){
@@ -48,24 +44,27 @@ year <- years[1][[1]]
 read_cols = c(
   "HhId", "Bzone",  "HhSize",
   "Age0to14", "Age15to19", "Age20to29", "Age30to54", "Age55to64", "Age65Plus",
-  "Dvmt", "TransitTrips", "WalkPMT", "BikePMT"
+  "Dvmt", "TransitPMT", "WalkPMT", "BikePMT"
 )
 Hhs <- fread(file, select = read_cols)
-persons <- hhsToPersons(Hhs, gender_ratio, input_dir)
+persons <- hhsToPersons(Hhs, input_dir, settings)
 
 # join PM2.5, leisure PA estimates to persons tables
-persons <- appendZoneAttributesToPersons(persons, zonePM, zonePA, year)
+# persons dt is now nested, second level in persons list
+persons$persons <- appendZoneAttributes(persons$persons, year, input_dir)
 
 # finally, append counterfactual scenario to persons
-trips <- appendCounterfactualScenario(persons)
-persons <- trips[[2]]
-trips <- trips[[1]]
+persons$persons <- appendCounterfactualScenario(persons$persons)
+
+# and parse scenario names from persons
+scenarios <- unique(persons$persons$scenario)
+
+# and extract trips
+trips <- extractTrips(persons$persons)
 
 ### step 2: run ITHIM core
 # AP pathway
-pm_exposure <- scenario_pm_calculations(trips, persons, input_dir)
-scenarios <- pm_exposure[[2]]
-pm_exposure <- pm_exposure[[1]]
+pm_exposure <- scenario_pm_calculations(trips, persons, input_dir, settings)
 
 # Assign relative risks to each person in the synthetic population for each disease
 # related to air pollution and each scenario based on the individual PM exposure levels
@@ -90,8 +89,9 @@ hb_AP_PA <- health_burden(ind_ap_pa = RR_PA_AP_calculations, module_dir, input_d
                           conf_int = ifelse(constant_mode, TRUE, FALSE))
 
 # crash pathway
-injuryTables <- prepareCrashData(persons, trips, module_dir)
-get_all_distances(injuryTables, trips, persons, scenarios)
+injuryRates <- prepareCrashData(persons, trips, module_dir)
+injuries <- injuries_function(trips, injuryRates, scenarios)
+browser()
 
 # summary
 
