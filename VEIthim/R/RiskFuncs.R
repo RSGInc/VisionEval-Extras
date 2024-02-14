@@ -33,7 +33,7 @@
 #' @export
 
 
-AP_dose_response <- function(cause, rr_values, dose, quantile, confidence_intervals = F) {
+AP_dose_response <- function(cause, rr_values, dose, quantile = 0.5, confidence_intervals = FALSE) {
   # Check there are NAs in dose or the classes is not numeric
   if (sum(is.na(dose)) > 0 || class(dose) != "numeric") {
     stop("Please provide dose in numeric")
@@ -279,64 +279,52 @@ dose_response <- function (cause, outcome_type, dose, quantile = 0.5, censor_met
 }
 
 
-gen_pa_rr <- function(mmets_pp, scenarios, module_dir, conf_int = F) {
+gen_pa_rr <- function(mmets, scenarios, module_dir) {
   
   # load physical activity relative risk values
   # these are stored in global env in ITHIM, which is not ideal....
   diseases <- fread(file.path(module_dir, "disease_outcomes_lookup.csv"))
   diseases <- diseases[physical_activity==1]  # isolate PA pathway
   
-  # create one long vector containing all mMET values for the synthetic population for all scenarios
-  dose_columns <- match(paste0("mmet_", scenarios), colnames(mmets_pp))
-  doses_vector <- unlist(data.frame(mmets_pp[, ..dose_columns]))
-  
   ### iterate over all all disease outcomes that are related to physical activity levels
-  for (j in c(1:nrow(diseases))[diseases$physical_activity == 1]) {
+  for (i in 1:nrow(diseases)) {
     
-    # get name of PA DR curve
-    pa_dn <- as.character(diseases$pa_acronym[j])
+    # isolate row corresponding to disease
+    disease <- diseases[i,]
     
     # define the potential outcomes as either fatal or fatal-and-non-fatal
-    outcome <- ifelse(diseases$outcome[j] == "deaths", "fatal",
+    outcome <- ifelse(disease$outcome == "deaths", "fatal",
                       "fatal-and-non-fatal"
     )
     
-    # get name of disease
-    pa_n <- as.character(diseases$acronym[j])
-    
-    # Set quantile to the default value
-    quant <- 0.5
-    
-    # Check if quantile for the the specific cause has been declared.
-    # If yes, then use the declared value instead
-    if (exists(paste0("PA_DOSE_RESPONSE_QUANTILE_", pa_dn))) {
-      quant <- get(paste0("PA_DOSE_RESPONSE_QUANTILE_", pa_dn))
-    }
-    
-    # Apply PA DR function to all doses as one long vector
-    # Use a hard censor method of WHO-QRL which flattens the relationship after 35 MMETs per week
-    return_vector <- dose_response(
-      cause = pa_dn, outcome_type = outcome,
-      dose = doses_vector, quantile = quant, confidence_intervals = conf_int,
-      censor_method = "WHO-QRL"
-    )
-    
-    ## take segments of returned vector corresponding to each scenario
-    for (i in 1:length(scenarios)) {
-      scen <- scenarios[i]
-      mmets_pp[[paste("RR_pa", scen, pa_n, sep = "_")]] <- return_vector$rr[(1 + (i - 1) * nrow(mmets_pp)):(i * nrow(mmets_pp))]
+    # calculate rr value for baseline and scenario and append to mmets
+    for (scenario in scenarios) {
       
-      if (conf_int) {
-        mmets_pp[[paste("RR_pa", scen, pa_n, "lb", sep = "_")]] <- return_vector$lb[(1 + (i - 1) * nrow(mmets_pp)):(i * nrow(mmets_pp))]
-        mmets_pp[[paste("RR_pa", scen, pa_n, "ub", sep = "_")]] <- return_vector$ub[(1 + (i - 1) * nrow(mmets_pp)):(i * nrow(mmets_pp))]
-      }
-    }
-  }
+      # Apply PA DR function for baseline
+      # Use a hard censor method of WHO-QRL which flattens the relationship after 35 MMETs per week
+      scenario_col <- paste0("mmet_", scenario)
+      rr <- dose_response(
+        cause = disease$pa_acronym,  # name of PA DR curve
+        outcome_type = outcome,
+        dose = mmets[, mmet_baseline],
+        censor_method = "WHO-QRL"
+      )
+      
+      # append rr value to mmets
+      scenario_rr_col <- paste("RR_pa", scenario, disease$acronym, sep = "_")
+      mmets[[scenario_rr_col]] <- rr$rr
+      
+      # but, need to truncate based on age
+      # pathway only valid btw 15-60 years old
+      mmets[age<15, (scenario_rr_col) := 1]
+      mmets[age>69, (scenario_rr_col) := 1]
+    }  # end of scenarios loop
+  }  # end of disease loop
   
   # clean up columns and return ap relative risks
-  scrub <- colnames(mmets_pp)[dose_columns]
-  mmets_pp[ ,(scrub) := NULL]  # in-place
-  return(mmets_pp)
+  scrub <- paste0("mmet_", scenarios)
+  mmets[ ,(scrub) := NULL]  # in-place
+  return(mmets)
 }
 
 
