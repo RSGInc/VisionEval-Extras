@@ -4,8 +4,6 @@ estimateVentilationRates <- function(persons, input_dir){
   
   # also need to estimate body mass for inhalation rates
   # we will draw from distributions supplied in core ITHIM codebase
-  input_dir <- file.path(input_dir, "ithim")
-  
   # Body mass
   body_mass <- fread(file.path(
     input_dir, "BodyMass.csv"),
@@ -123,7 +121,7 @@ hhsToPersons <- function(Hhs, input_dir, settings){
   Hhs$bike_minutes <- Hhs$bike_dist / settings[name=="speed_bike"]$value * 60
   
   # melt Hh table so that each age bin is a row
-  # replace 0 with NA onthe fly to so we can use na.rm in melt()
+  # replace 0 with NA on the fly to so we can use na.rm in melt()
   persons <- melt(
     replace(Hhs, Hhs==0, NA),  # so we can use na.rm = TRUE
     id.vars=c("HhId", "Bzone"),
@@ -188,7 +186,7 @@ hhsToPersons <- function(Hhs, input_dir, settings){
   }
   
   # clean up schema and return list of persons, ventilation rates
-  scrub <- c("ageBin", "HhSize", "minAge", "maxAge")
+  scrub <- c("ageBin", "minAge", "maxAge")
   persons[ ,(scrub) := NULL]  # in-place
   return(list(persons = persons, ventRates = ventilationRates))
 }
@@ -218,7 +216,8 @@ appendZoneAttributes <- function(persons, year, input_dir){
   
   # background PA is a distribution, so assign a value to each person
   prob_samp <- function(x) sample.int(n=4, size=1, prob=x) # from jay.sf
-  persons[, pa_group := apply(.SD, 1, prob_samp), .SDcols=c("pa0", "pa1", "pa2", "pa3")]
+  persons[, pa_group := apply(.SD, 1, prob_samp), 
+          .SDcols=c("pa0", "pa1", "pa2", "pa3")]
   
   # now that we have a bin for each person, assign min/max PA values
   persons$minPA <- 0

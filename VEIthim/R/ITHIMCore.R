@@ -93,7 +93,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   
   # concentration contributed by non-transport share
   # remains constant across the scenarios
-  background_pm <- Persons$persons[scenario=="baseline", PM25]
+  background_pm <- Persons$scenarioPersons[scenario=="baseline", PM25]
   non_transport_pm <- background_pm*(1 - settings[name=="pm_trans_share"]$value)
   mode_inventory <- developModeInventory(settings)
   
@@ -101,7 +101,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   # ie, we do not need to add travel not covered in synthetic trip set
   # total distance traveled by each mode
   dist_cols <- c("auto_dist", "transit_dist", "walk_dist", "bike_dist")
-  distances_by_mode <- Persons$persons[, lapply(.SD, sum, na.rm=TRUE),
+  distances_by_mode <- Persons$scenarioPersons[, lapply(.SD, sum, na.rm=TRUE),
                                        by=.(scenario),
                                        .SDcols=dist_cols]
   scenarios <- distances_by_mode$scenario  # stash scenario names
@@ -143,7 +143,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   # in this sum, the non-transport pm is constant
   # the transport emissions scale the transport contribution (pm_trans_share) to the base level (PM_CONC_BASE)
   for(counterfactual in counterfactual_scenarios){
-    Persons$persons[scenario==counterfactual, "PM25"] <- 
+    Persons$scenarioPersons[scenario==counterfactual, "PM25"] <- 
       non_transport_pm + settings[name=="pm_trans_share"]$value * background_pm * sum(trans_emissions[[counterfactual]], na.rm = T)/baseline_pm
   }
   
@@ -157,7 +157,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   #----
   # Dan: These new lines of code are for the ventilation rate
   # Dan: MET values for each mode/activity. These values come from the Compendium
-  mets <- fread(file.path(input_dir, "ithim", "mets.csv"),
+  mets <- fread(file.path(input_dir, "mets.csv"),
                 select = c("mode", "met"))
   
   # Dan: Adding MET values [dimensionless] for each mode
@@ -191,7 +191,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   
   # join PM to trips
   cols = c("PId", "scenario", "PM25")
-  trips <- trips[Persons$persons[, ..cols],
+  trips <- trips[Persons$scenarioPersons[, ..cols],
                  on = .(PId, scenario),
                  nomatch = NULL]
   
@@ -343,12 +343,12 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   
   # append to persons
   join_cols <- c("PId", "scenario", "conc_pm_inhaled")
-  Persons$persons <- Persons$persons[activities[, ..join_cols],
+  Persons$scenarioPersons <- Persons$scenarioPersons[activities[, ..join_cols],
                                      on = .(PId, scenario)]
   
   # Calculate total air and pm inhaled in each person
   # Change to wide format
-  pm_exp <- Persons$persons %>% 
+  pm_exp <- Persons$scenarioPersons %>% 
     dplyr::select(PId, scenario, conc_pm_inhaled) %>% 
     pivot_wider(names_from = 'scenario', values_from = 'conc_pm_inhaled')
   
@@ -359,7 +359,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   
   # Join person info to pm_exp
   join_cols <- c("PId", "age", "sex")
-  pm_exp <- pm_exp[Persons$persons[scenario=="baseline", ..join_cols],
+  pm_exp <- pm_exp[Persons$scenarioPersons[scenario=="baseline", ..join_cols],
                    on = .(PId)]
   
   # return pm_exp; per person PM2.5 exposure (unit: ug/m3)
@@ -370,7 +370,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
 total_mmet <- function(persons, trips, scenarios, input_dir) {
   
   # read mets
-  mets <- fread(file.path(input_dir, "ithim", "mets.csv"),
+  mets <- fread(file.path(input_dir, "mets.csv"),
                 select = c("mode", "met"))
   
   # extract all people from the trip set with an active travel (walk or cycle) stage mode
@@ -418,7 +418,7 @@ total_mmet <- function(persons, trips, scenarios, input_dir) {
   
   # Join person info to mmets
   join_cols <- c("PId", "age", "sex")
-  mmets <- mmets[persons$persons[scenario=="baseline", ..join_cols], on = .(PId)]
+  mmets <- mmets[persons$scenarioPersons[scenario=="baseline", ..join_cols], on = .(PId)]
   return(mmets)
 }
 
