@@ -71,7 +71,7 @@ health_burden <- function(ind_ap_pa, module_dir, input_dir, scenarios, conf_int 
   diseases <- fread(file.path(module_dir, "disease_outcomes_lookup.csv"))
   
   # load gbd data for region
-  gbd_data <- fread(file.path(input_dir, "ithim", "gbd_oregon.csv"))
+  gbd_data <- fread(file.path(input_dir, "gbd_oregon.csv"))
   
   # convert gbd data to rates
   gbd_data$deathrate <- gbd_data$deaths / gbd_data$ref_pop
@@ -190,20 +190,130 @@ health_burden <- function(ind_ap_pa, module_dir, input_dir, scenarios, conf_int 
 #' @export
 
 
-join_hb_and_injury <- function(ind_ap_pa, inj) {
-  deaths <- ind_ap_pa$deaths
-  ylls <- ind_ap_pa$ylls
+injury_death_to_yll <- function(persons, injuries, input_dir, ref_scenarios) {
   
-  # Select deaths columns from injury data
-  inj_deaths <- dplyr::select(inj, c(age_cat, sex, contains("deaths")))
+  # load gbd data for region
+  gbd_data <- fread(file.path(input_dir, "gbd_oregon.csv"))
+  gbd_data <- gbd_data[cause=="road_injuries"]
+  gbd_data$yll_ratio <- gbd_data$ylls / gbd_data$deaths
   
-  # Select yll columns from injury data
-  inj_ylls <- dplyr::select(inj, c(age_cat, sex, contains("yll")))
+  # append sex, age to injuries
+  join_cols <- c("PId", "sex", "age")
+  injuries <- injuries[persons[scenario=="baseline"][, ..join_cols],
+                       on = .(PId)]
   
-  # Join injuries data to global deaths and yll datasets
-  deaths <- dplyr::left_join(deaths, inj_deaths, by = c("age_cat", "sex"))
-  ylls <- dplyr::left_join(ylls, inj_ylls, by = c("age_cat", "sex"))
+  # add person age bin so we can join gbd data
+  injuries$age_bin <- (injuries$age %/% 5) * 5
+  injuries[age_bin==0, age_bin := 1]  # to match lowest age bin in gbd data
+  join_cols <- c("age_bin", "sex", "yll_ratio")
+  injuries <- injuries[gbd_data[, ..join_cols],
+                       on = .(age_bin, sex),
+                       nomatch = NULL]
+  
+  # now, we can use yll_ratio to estimate road injury ylls for each scenario
+  for (scenario in ref_scenarios){
+    
+    # parse colnames for scenario
+    deaths_colname <- paste(scenario, 'traffic_deaths', sep = '_')
+    ylls_colname <- paste(scenario, 'traffic_ylls', sep = '_')
+    
+    # estimate ylls and append
+    ylls <- injuries[, ..deaths_colname] * injuries$yll_ratio
+    injuries[, ylls_colname] <- ylls
+  }
+  
+  # finally, calc difference between baseline, counterfactual
+  deaths_colname <- paste(ref_scenarios[2], 'traffic_deaths', sep = '_')
+  delta_deaths <- 
+    injuries$baseline_traffic_deaths - injuries[, ..deaths_colname]
+  ylls_colname <- paste(ref_scenarios[2], 'traffic_ylls', sep = '_')
+  delta_ylls <- 
+    injuries$baseline_traffic_ylls - injuries[, ..ylls_colname]
+  
+  # replace scenario cols with deltas
+  injuries[, (deaths_colname) := delta_deaths]
+  injuries[, (ylls_colname) := delta_ylls]
+  
+  # clean up schema and return injury burden
+  # to match other health burden objects return list of (deaths, ylls)
+  scrub <- c("sex", "age", "age_bin", "yll_ratio",
+             "baseline_traffic_deaths", "baseline_traffic_ylls")
+  injuries[ ,(scrub) := NULL][order(PId)]  # in-place
+  traffic_deaths <- injuries[, grep("PId|traffic_deaths", names(injuries)),
+                             with = FALSE]
+  injuries <- injuries[, grep("PId|traffic_ylls", names(injuries)),
+                       with = FALSE]  # recycle object name
+  return(list(deaths= traffic_deaths, ylls = injuries))
+}
+
+
+join_hb_and_injury <- function(hb_ap_pa, inj) {
+  
+  # combine deaths, ylls on the fly
+  deaths <- hb_ap_pa$deaths[inj$deaths, on = .(PId)]
+  ylls <- hb_ap_pa$ylls[inj$ylls, on = .(PId)]
+  
+  # return total health burden
   list(deaths = deaths, ylls = ylls)
+}
+
+
+aggregateHealthBurden <- function(healthBurden, persons, scenario, scenarioEstimates) {
+  
+  # join person attributes to health burden estimates
+  joincols <- c("HhId", "Bzone", "PId", "age", "sex")
+  healthBurden$deaths <- healthBurden$deaths[persons[, ..joincols],
+                                             on = .(PId)]
+  
+  # roll-up to hhs, bzones
+  outcomes <- names(
+    healthBurden$deaths)[grepl(scenario, names(healthBurden$deaths))]
+  hhAgg_deaths <- healthBurden$deaths[, lapply(.SD, sum),
+                                      by=.(HhId),
+                                      .SDcols=outcomes]
+  zoneAgg_deaths <- healthBurden$deaths[, lapply(.SD, sum),
+                                        by=.(Bzone),
+                                        .SDcols=outcomes]
+  hhAgg_deaths$scenario <- scenario
+  zoneAgg_deaths$scenario <- scenario
+  
+  # join person attributes to health burden estimates
+  joincols <- c("HhId", "Bzone", "PId", "age", "sex")
+  healthBurden$ylls <- healthBurden$ylls[persons[, ..joincols],
+                                             on = .(PId)]
+  
+  # roll-up to hhs, bzones
+  outcomes <- names(
+    healthBurden$ylls)[grepl(scenario, names(healthBurden$ylls))]
+  hhAgg_ylls <- healthBurden$ylls[, lapply(.SD, sum),
+                                  by=.(HhId),
+                                  .SDcols=outcomes]
+  zoneAgg_ylls <- healthBurden$ylls[, lapply(.SD, sum),
+                                    by=.(Bzone),
+                                    .SDcols=outcomes]
+  hhAgg_ylls$scenario <- scenario
+  zoneAgg_ylls$scenario <- scenario
+  
+  # append each object to scenarioEstimates
+  # we can rbind after cleaning up schema
+  # hh deaths
+  names(hhAgg_deaths) <- sub(paste0(scenario, "_"), '', names(hhAgg_deaths))
+  scenarioEstimates$hhDeaths <- rbind(scenarioEstimates$hhDeaths, hhAgg_deaths)
+  
+  # hh ylls
+  names(hhAgg_ylls) <- sub(paste0(scenario, "_"), '', names(hhAgg_ylls))
+  scenarioEstimates$hhYlls <- rbind(scenarioEstimates$hhYlls, hhAgg_ylls)
+  
+  # zonal deaths
+  names(zoneAgg_deaths) <- sub(paste0(scenario, "_"), '', names(zoneAgg_deaths))
+  scenarioEstimates$zoneDeaths <- rbind(scenarioEstimates$zoneDeaths, zoneAgg_deaths)
+  
+  # zonal ylls
+  names(zoneAgg_ylls) <- sub(paste0(scenario, "_"), '', names(zoneAgg_ylls))
+  scenarioEstimates$zoneYlls <- rbind(scenarioEstimates$zoneYlls, zoneAgg_ylls)
+  
+  # return scenarioEstimates list
+  return(scenarioEstimates)
 }
 
 
