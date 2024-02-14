@@ -200,7 +200,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   trips$travel_air_inhaled <- trips$minutes / 60 * trips$v_rate
   
   # PM inhaled (micro grams) = duration * ventilation rate * exposure rates * concentration
-  trips$travel_pm_inhaled <- trips$minutes * trips$v_rate * trips$e_rate * trips$PM25
+  trips$travel_pm_inhaled <- trips$minutes / 60 * trips$v_rate * trips$e_rate * trips$PM25
   
   # roll-up to person-level
   sum_cols <- c("minutes", "travel_air_inhaled", "travel_pm_inhaled")
@@ -362,8 +362,9 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   pm_exp <- pm_exp[Persons$scenarioPersons[scenario=="baseline", ..join_cols],
                    on = .(PId)]
   
-  # return pm_exp; per person PM2.5 exposure (unit: ug/m3)
-  return(pm_exp)
+  # enforce sorting and return pm_exp
+  # per person PM2.5 exposure (unit: ug/m3)
+  return(pm_exp[order(PId)])
 }
 
 
@@ -418,7 +419,10 @@ total_mmet <- function(persons, trips, scenarios, input_dir) {
   
   # Join person info to mmets
   join_cols <- c("PId", "age", "sex")
-  mmets <- mmets[persons$scenarioPersons[scenario=="baseline", ..join_cols], on = .(PId)]
-  return(mmets)
+  mmets <- mmets[persons$scenarioPersons[scenario=="baseline", ..join_cols],
+                 on = .(PId)]
+  
+  # enforce sorting and return
+  return(mmets[order(PId)])
 }
 
