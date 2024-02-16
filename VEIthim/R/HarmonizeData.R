@@ -1,5 +1,26 @@
 # this module prepares VE outputs for ITHIM
 
+
+#' Load VE households
+#'
+#' Helper function to load VE households table from output (csv) directory
+#'
+#' This function performs the following steps:
+#'
+#' \itemize{
+#'  \item given scenario name and year, identifies correct file to load
+#'
+#'  \item loads VE household table with only required columns
+#'    }
+#'
+#' @param model VE model directory
+#' @param year VE model year
+#'
+#' @return data.table containing VE households
+#'
+#' @export
+
+
 loadVEHhs <- function(model, year) {
   
   # identify correct hh table within model outputs directory
@@ -20,9 +41,32 @@ loadVEHhs <- function(model, year) {
 }
 
 
+#' Estimate ventilation rates
+#'
+#' This function estiamtes ventilation rates for each VE person
+#'
+#' This function performs the following steps:
+#'
+#' \itemize{
+#'  \item NOTE: this function is largely unchanged from ITHIM-R source code
+#'   
+#'  \item load parameters that define ventilation rate calculations
+#'
+#'  \item estimates ventilation rate, drawing from distributions to account for 
+#'  uncertainty
+#'    }
+#'
+#' @param persons data.table containing persons synthesized from VE households
+#' @param input_dir local file path to VE model input dir
+#'
+#' @return data.table containing ventilation rate estimates for VE persons
+#'
+#' @export
+
+
 estimateVentilationRates <- function(persons, input_dir){
   
-  # also need to estimate body mass for inhalation rates
+  # estimate body mass for inhalation rates
   # we will draw from distributions supplied in core ITHIM codebase
   # Body mass
   body_mass <- fread(file.path(
@@ -49,7 +93,7 @@ estimateVentilationRates <- function(persons, input_dir){
     input_dir, "VentilationFromOxygenUptake.csv"),
     select = c("age", "sex", "intercept_a", "slope_b", "sd_person_level", "sd_test_level"))  
   
-  # Dan: Draw from a log-normal distribution the body mass [kg] of each person
+  # Draw from a log-normal distribution the body mass [kg] of each person
   # in the synthetic population
   body_mass <- persons[body_mass, on = c('age', 'sex'),
                        nomatch = NULL][order(PId)] %>%
@@ -62,7 +106,7 @@ estimateVentilationRates <- function(persons, input_dir){
                          ifelse(sample > upper, upper, sample))) %>% 
     dplyr::select(PId, age, sex, body_mass)
   
-  # Dan: Draw from a uniform distribution the Energy Conversion Factor [lt/kcal]
+  # Draw from a uniform distribution the Energy Conversion Factor [lt/kcal]
   # of each person in the synthetic population
   body_mass <- body_mass %>%
     left_join(ecf, by = c("age", "sex")) %>%
@@ -73,7 +117,7 @@ estimateVentilationRates <- function(persons, input_dir){
     ) %>%
     dplyr::select(PId, age, sex, body_mass, ecf)
   
-  # Dan: For each person in the synthetic population, calculate the Resting
+  # For each person in the synthetic population, calculate the Resting
   # Metabolic Rate [kcal/min] from a given regression formula with a normally
   # distributed error
   body_mass <- body_mass %>%
@@ -87,7 +131,7 @@ estimateVentilationRates <- function(persons, input_dir){
     ) %>%
     dplyr::select(PId, age, sex, body_mass, ecf, rmr)
   
-  # Dan: Draw from a normalized maximum oxygen uptake rate (NVO2max) [lt/(min*kg)]
+  # Draw from a normalized maximum oxygen uptake rate (NVO2max) [lt/(min*kg)]
   # of each person in the synthetic population
   body_mass <- body_mass %>%
     left_join(nvo2max, by = c("age", "sex")) %>%
@@ -104,11 +148,11 @@ estimateVentilationRates <- function(persons, input_dir){
     ) %>%
     dplyr::select(PId, age, sex, body_mass, ecf, rmr, nvo2max)
   
-  # Dan: Calculate the maximum oxygen uptake rate [lt/min] of each person in the
+  # Calculate the maximum oxygen uptake rate [lt/min] of each person in the
   # synthetic population
   body_mass$vo2max <- body_mass$nvo2max * body_mass$body_mass
   
-  # Dan: Get the parameters for the empirical equation to calculate the
+  # Get the parameters for the empirical equation to calculate the
   # Ventilation Rate from Oxygen Uptake Rate in each person in the
   # synthetic population
   body_mass <- body_mass %>%
@@ -125,6 +169,37 @@ estimateVentilationRates <- function(persons, input_dir){
   
   return(setDT(body_mass))
 }
+
+
+#' Synthesize persons from VE households
+#'
+#' Function to synthesize VE persons using data in the VE households table and 
+#' assign required person attributes
+#'
+#' This function performs the following steps:
+#'
+#' \itemize{
+#'  \item aligns travel mode names in Hh table with downstream expectations
+#'  
+#'  \item estimates travel duration by mode from Hh miles traveled estimates
+#'
+#'  \item decomposes Hhs into persons based on Hh age distribution
+#'  
+#'  \item assign age (continuous) and sex to each person 
+#'  
+#'  \item call estimateVentilationRates func to estimate ventilation rates
+#'  
+#'  \item distribute Hh travel to synthetic persons 
+#'    }
+#'
+#' @param Hhs data.table containing VE households
+#' @param input_dir local file path to VE model input dir
+#' @param settings data.table storing ithim settings/configuration
+#'
+#' @return list containing two data.tables: one containing VE persons, 
+#' one containing ventilation rate estiamtes for those persons
+#'
+#' @export
 
 
 hhsToPersons <- function(Hhs, input_dir, settings){
@@ -210,6 +285,27 @@ hhsToPersons <- function(Hhs, input_dir, settings){
   persons[ ,(scrub) := NULL]  # in-place
   return(list(persons = persons, ventRates = ventilationRates))
 }
+
+
+#' Append zone attributes
+#'
+#' Joins zone attributes to VE persons
+#'
+#' This function performs the following steps:
+#'
+#' \itemize{
+#'  \item loads bzone background PM, PA estimates for study region
+#'
+#'  \item joins attributes to persons based on home bzone
+#'    }
+#'
+#' @param persons data.table containing VE persons
+#' @param year VE model year
+#' @param input_dir local file path to VE model input dir
+#'
+#' @return data.table containing VE persons with zonal exposures appended
+#'
+#' @export
 
 
 appendZoneAttributes <- function(persons, year, input_dir){
