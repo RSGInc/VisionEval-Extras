@@ -193,7 +193,7 @@ health_burden <- function(ind_ap_pa, module_dir, input_dir, scenarios, conf_int 
 injury_death_to_yll <- function(persons, injuries, input_dir, ref_scenarios) {
   
   # load gbd data for region
-  gbd_data <- fread(file.path(input_dir, "gbd_oregon.csv"))
+  gbd_data <- fread(file.path(input_dir, "gbd.csv"))
   gbd_data <- gbd_data[cause=="road_injuries"]
   gbd_data$yll_ratio <- gbd_data$ylls / gbd_data$deaths
   

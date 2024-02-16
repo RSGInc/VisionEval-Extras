@@ -33,6 +33,7 @@ scenarios <- c(
 # file paths to base model run csvs, etc.
 base_model <- file.path(base_dir, base_model)
 module_dir <- file.path(getwd(), "inst", "extdata")
+input_dir <- file.path(base_model, "inputs", "ithim")  # use base model inputs
 
 # load ithim settings and parse base, forecast years
 settings <- loadSettings(module_dir)
@@ -60,9 +61,11 @@ for (year in years){
   for (scenario in scenarios){
     
     ### PREPARE SCENARIO OUTPUTS
-    # instantiate list of (baseline, scenario)
     print(paste(year, scenario))
+    
+    # instantiate list of (baseline, scenario)
     ref_scenarios <- c("baseline", scenario)
+    scenario_dir <- file.path(base_dir, scenario)
     
     # load VE Hhs table for scenario
     scenarioHhs <- loadVEHhs(scenario_dir, year)
