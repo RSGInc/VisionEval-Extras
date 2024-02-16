@@ -120,7 +120,7 @@ gen_pa_rr <- function(mmets, scenarios, module_dir) {
       rr <- dose_response(
         cause = disease$pa_acronym,  # name of PA DR curve
         outcome_type = outcome,
-        dose = mmets[, mmet_baseline],
+        dose = mmets[[scenario_col]],
         censor_method = "WHO-QRL"
       )
       
@@ -129,7 +129,7 @@ gen_pa_rr <- function(mmets, scenarios, module_dir) {
       mmets[[scenario_rr_col]] <- rr$rr
       
       # but, need to truncate based on age
-      # pathway only valid btw 15-60 years old
+      # pathway only valid btw 15-70 years old
       mmets[age<15, (scenario_rr_col) := 1]
       mmets[age>69, (scenario_rr_col) := 1]
     }  # end of scenarios loop
