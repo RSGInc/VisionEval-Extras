@@ -1,5 +1,25 @@
 # this module prepares VE outputs for ITHIM
 
+loadVEHhs <- function(model, year) {
+  
+  # identify correct hh table within model outputs directory
+  hh_year <- paste0("Household_*", year, "*")
+  file <- Sys.glob(file.path(model, "results", "output", "*", hh_year))
+  input_dir <- file.path(model, "inputs", "ithim")  # use base model inputs
+  
+  # load base model households table
+  read_cols = c(
+    "HhId", "Bzone",  "HhSize",
+    "Age0to14", "Age15to19", "Age20to29", "Age30to54", "Age55to64", "Age65Plus",
+    "Dvmt", "TransitPMT", "WalkPMT", "BikePMT"
+  )
+  Hhs <- fread(file, select = read_cols)
+  
+  # return Hhs table
+  return(Hhs)
+}
+
+
 estimateVentilationRates <- function(persons, input_dir){
   
   # also need to estimate body mass for inhalation rates
