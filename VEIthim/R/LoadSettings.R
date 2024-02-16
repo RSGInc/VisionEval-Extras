@@ -2,7 +2,7 @@
 loadSettings <- function(module_dir){
   
   # read settings
-  settings <- fread(file.path(module_dir, "ithim_settings.csv"))
+  settings <- fread(file.path(module_dir, "settings.csv"))
   
   return(settings)
 }

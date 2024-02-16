@@ -232,10 +232,10 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   # - When the known time is greater than 18 hours, we assign it to 18 and sleep
   # to 6 hours. Leisure and light activities will be zero in this case
   
-  sleep_hours <- 8.3
-  leisure_hours <- 3.15
-  light_hours <- 10.75
-  
+  sleep_hours <- settings[name=="sleep_hours"]$value
+  leisure_hours <- settings[name=="leisure_hours"]$value
+  light_hours <- settings[name=="light_hours"]$value
+
   # Transforming leisurePA to a daily value
   daily_leisurePA = (activities$leisurePA / 60) / 7
   

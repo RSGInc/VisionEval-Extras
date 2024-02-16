@@ -71,7 +71,7 @@ health_burden <- function(ind_ap_pa, module_dir, input_dir, scenarios, conf_int 
   diseases <- fread(file.path(module_dir, "disease_outcomes_lookup.csv"))
   
   # load gbd data for region
-  gbd_data <- fread(file.path(input_dir, "gbd_oregon.csv"))
+  gbd_data <- fread(file.path(input_dir, "gbd.csv"))
   
   # convert gbd data to rates
   gbd_data$deathrate <- gbd_data$deaths / gbd_data$ref_pop
