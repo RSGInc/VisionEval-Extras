@@ -1,5 +1,32 @@
 # this module appends counterfactual scenario to persons table
 
+
+#' Append counterfacual scenario
+#'
+#' Append travel estimates from counterfacual scenario to baseline scenario
+#'
+#' This function performs the following steps:
+#'
+#' \itemize{
+#'  \item creates a copy of VE persons synthesized from baseline VE household
+#'
+#'  \item appends counterfactual scenario travel estimates to persons copy
+#'  
+#'  \item estimates travel duration by mode and assigns to counterfactual scenario persons
+#'  
+#'  \item rbinds baseline, counterfactual scenario to align with downstream ithim fu
+#'    }
+#'
+#' @param persons data.table containing VE persons (from reference scenario)
+#' @param scenarioHhs data.table containing VE households for counterfactual scenario
+#' @param scenario name of counterfactual scenario
+#' @param settings data.table storing ithim settings/configuration
+#'
+#' @return data.table containing VE households
+#'
+#' @export
+
+
 appendCounterfactualScenario <- function(persons, scenarioHhs, scenario, settings){
   
   # first, establish baseline scenario
@@ -39,6 +66,27 @@ appendCounterfactualScenario <- function(persons, scenarioHhs, scenario, setting
   persons <- rbind(persons, counterfactual)
   return(persons)
 }
+
+
+#' Extract trips
+#'
+#' Converts person daily travel estimates to pseudo-trips (one trip per mode per day)
+#' This is done because downstream ithim funcs operate on trip tables, so most
+#' straightforward way to align model frameworks is to develop pseudo-trips
+#'
+#' This function performs the following steps:
+#'
+#' \itemize{
+#'  \item melts persons table to generate pseudo-trips view (each row is a trip)
+#'
+#'  \item adds duration to pseudo-trips view 
+#'    }
+#'
+#' @param persons data.table containing VE persons (reference and counterfactual)
+#'
+#' @return data.table containing VE pseudo-trips
+#'
+#' @export
 
 
 extractTrips <- function(persons){
