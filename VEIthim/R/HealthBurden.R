@@ -84,7 +84,7 @@ health_burden <- function(ind_ap_pa, module_dir, input_dir, scenarios, conf_int 
   
   ### iterate over all disease outcomes
   for (j in 1:nrow(diseases)) {
-    
+      
     # Disease acronym and full name
     ac <- as.character(diseases$acronym[j])
     gbd_dn <- as.character(diseases$GBD_name[j])
@@ -258,7 +258,7 @@ join_hb_and_injury <- function(hb_ap_pa, inj) {
 }
 
 
-aggregateHealthBurden <- function(healthBurden, persons, scenario, scenarioEstimates) {
+aggregateHealthBurden <- function(healthBurden, persons, scenario, scenario_dir) {
   
   # join person attributes to health burden estimates
   joincols <- c("HhId", "Bzone", "PId", "age", "sex")
@@ -274,8 +274,6 @@ aggregateHealthBurden <- function(healthBurden, persons, scenario, scenarioEstim
   zoneAgg_deaths <- healthBurden$deaths[, lapply(.SD, sum),
                                         by=.(Bzone),
                                         .SDcols=outcomes]
-  hhAgg_deaths$scenario <- scenario
-  zoneAgg_deaths$scenario <- scenario
   
   # join person attributes to health burden estimates
   joincols <- c("HhId", "Bzone", "PId", "age", "sex")
@@ -291,35 +289,29 @@ aggregateHealthBurden <- function(healthBurden, persons, scenario, scenarioEstim
   zoneAgg_ylls <- healthBurden$ylls[, lapply(.SD, sum),
                                     by=.(Bzone),
                                     .SDcols=outcomes]
-  hhAgg_ylls$scenario <- scenario
-  zoneAgg_ylls$scenario <- scenario
   
-  # append each object to scenarioEstimates
-  # we can rbind after cleaning up schema
+  # get name of output csv dir for scenario 
+  output_dir <- Sys.glob(file.path(scenario_dir, "results", "output", "*"))
+  
+  # now, clean up schema and write each output
   # hh deaths
   names(hhAgg_deaths) <- sub(paste0(scenario, "_"), '', names(hhAgg_deaths))
-  scenarioEstimates$hhDeaths <- rbind(scenarioEstimates$hhDeaths, hhAgg_deaths)
+  write.csv(hhAgg_deaths, file.path(
+    output_dir, paste0("ithim_Household_", scenario,"-mortality_", year, ".csv")))
   
   # hh ylls
   names(hhAgg_ylls) <- sub(paste0(scenario, "_"), '', names(hhAgg_ylls))
-  scenarioEstimates$hhYlls <- rbind(scenarioEstimates$hhYlls, hhAgg_ylls)
+  write.csv(hhAgg_ylls, file.path(
+    output_dir, paste0("ithim_Household_", scenario,"-ylls_", year, ".csv")))
   
   # zonal deaths
   names(zoneAgg_deaths) <- sub(paste0(scenario, "_"), '', names(zoneAgg_deaths))
-  scenarioEstimates$zoneDeaths <- rbind(scenarioEstimates$zoneDeaths, zoneAgg_deaths)
+  write.csv(zoneAgg_deaths, file.path(
+    output_dir, paste0("ithim_Bzone_", scenario,"-mortality_", year, ".csv")))
   
   # zonal ylls
   names(zoneAgg_ylls) <- sub(paste0(scenario, "_"), '', names(zoneAgg_ylls))
-  scenarioEstimates$zoneYlls <- rbind(scenarioEstimates$zoneYlls, zoneAgg_ylls)
-  
-  # return scenarioEstimates list
-  return(scenarioEstimates)
+  write.csv(zoneAgg_ylls, file.path(
+    output_dir, paste0("ithim_Bzone_", scenario,"-ylls_", year, ".csv")))
 }
 
-
-combine_health_and_pif <- function(pif_values, hc = DISEASE_BURDEN) {
-  setorder(hc, dem_index)
-  hm_cn_values <- hc$burden
-  return_values <- hm_cn_values * pif_values # multiply burden of disease times PIF
-  round(as.vector(return_values), 5)
-}
