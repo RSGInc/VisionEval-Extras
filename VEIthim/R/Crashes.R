@@ -36,37 +36,92 @@
 #' @export
 
 
-prepareCrashData <- function(trips, input_dir) {
-  
-  # load crash data
-  injuries <- fread(file.path(input_dir, "fars.csv"))
-  
-  # if strike mode is null, replace with 'nov' (no other vehicle)
-  injuries[strike_mode=="", strike_mode := "nov"]  # in-place
-  
-  # assign weight to account for multiple years of injury data
-  # ie, convert to yearly rate
-  injuries$yearly_rate = 1 / length(unique(injuries$year))
+prepareCrashData <- function(hhs, input_dir, base_year, config) {
   
   # we are using the California ITHIM model here
   # ie, mechanistic (non-probalistic) approach
-  # first, we count fatalities by mode combinations
-  agg_cols <- c("yearly_rate")
-  injuries <- injuries[, lapply(.SD, sum),
-                       by=.(cas_mode, strike_mode),
-                       .SDcols=agg_cols]
   
+  # two crash methods supported
+  crash_method <- config[name=="crash_method"]$value
+  
+  # method 1: fars data
+  if (crash_method == "fars"){
+    
+    # load fars data
+    browser()
+    injuries <- fread(file.path(input_dir, "fars.csv"))
+    
+    # if strike mode is null, replace with 'nov' (no other vehicle)
+    injuries[strike_mode=="", strike_mode := "nov"]  # in-place
+    
+    # assign weight to account for multiple years of injury data
+    # ie, convert to yearly rate
+    injuries$yearly_rate = 1 / length(unique(injuries$year))
+    
+    # count fatalities by mode combinations
+    agg_cols <- c("yearly_rate")
+    injuries <- injuries[, lapply(.SD, sum),
+                         by=.(cas_mode, strike_mode),
+                         .SDcols=agg_cols]
+  }
+  
+  # method 2: VE marea crash factors
+  else if (crash_method == "ve"){
+    
+    # load ve crash rates
+    injuries <- fread(file.path(input_dir, "marea_safety_factors.csv"))
+    injuries <- injuries[Year==2021]
+    
+    # isolate fatality data (apples-to-apples with fars)
+    fatal_cols <- colnames(injuries)[colnames(injuries) %like% "Fatal"]
+    injuries <- injuries[, ..fatal_cols]
+    colnames(injuries) <- tolower(gsub('Fatal','',fatal_cols))
+    
+    # combine bus/rail fatalities
+    injuries$transit <- injuries$bus + injuries$rail
+    mode_cols = c("auto", "transit", "walk", "bike")
+    injuries <- injuries[, ..mode_cols]
+
+    # reshape injuries to match fars format
+    injuries <- melt(injuries,
+                     measure.vars = mode_cols,
+                     variable.name = "cas_mode",
+                     value.name = "yearly_rate")
+    
+    # we can just assume all crashes have a strike_mode of "auto"
+    # this is mostly ok, but we are missing single-vehicle crashes
+    injuries$strike_mode <- "auto"
+  }
+    
   # we also need yearly distance by mode
+  # first, rename mode cols
+  mode_cols = c("auto", "transit", "walk", "bike")
+  setnames(Hhs,
+           c("Dvmt", "TransitPMT", "WalkPMT", "BikePMT"),
+           mode_cols)
   agg_cols <- c("distance")
-  distance_by_mode <- trips[scenario=="baseline"][, lapply(.SD, sum),
-                               by=.(mode),
-                               .SDcols=agg_cols]
+  distance_by_mode <- Hhs[, ..mode_cols][, lapply(.SD, sum),
+                          .SDcols=mode_cols]
+  
+  # melt distances by mode 
+  distance_by_mode <- melt(distance_by_mode,
+                           measure.vars = mode_cols,
+                           variable.name = "mode",
+                           value.name = "distance")
+  
+  # if using ve safety factors, we need to estimate baseline fatalities by mode
+  # which will then be used in the who-hit-who matrix
+  # we currently have rates per 100 mil VMT
+  if (crash_method == "ve"){
+    yearly_vmt <- distance_by_mode[mode=="auto"]$distance * 365
+    injuries$yearly_rate <- injuries$yearly_rate * yearly_vmt / 100000000
+  }
   
   # append daily cas_mode distances
   injuries <- injuries[distance_by_mode,
                        on = c(cas_mode = "mode"),
                        nomatch = NULL]
-  
+
   # annualize distance
   injuries$cas_mode_dist <- injuries$distance * 365
   injuries[ ,distance := NULL]  # clean up schema after join
