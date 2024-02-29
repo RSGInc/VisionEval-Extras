@@ -1,6 +1,6 @@
 #' Get relative risk for diseases given PM exposure
 #'
-#' Computes the relative risk (RR) for individuals in the synthetic population for each disease given PM exposure
+#' Computes the relative risk (RR) for persons for each disease given PM exposure
 #'
 #' This function performs the following steps:
 #' \itemize{
@@ -93,11 +93,11 @@ dose_response <- function (cause, outcome_type, dose, quantile = 0.5, censor_met
 }
 
 
-gen_pa_rr <- function(mmets, scenarios, module_dir) {
+gen_pa_rr <- function(mmets, scenarios, input_dir) {
   
   # load physical activity relative risk values
   # these are stored in global env in ITHIM, which is not ideal....
-  diseases <- fread(file.path(module_dir, "disease_outcomes_lookup.csv"))
+  diseases <- fread(file.path(input_dir, "disease_outcomes_lookup.csv"))
   diseases <- diseases[physical_activity==1]  # isolate PA pathway
   
   ### iterate over all all disease outcomes that are related to physical activity levels
@@ -142,11 +142,11 @@ gen_pa_rr <- function(mmets, scenarios, module_dir) {
 }
 
 
-combined_rr_ap_pa <- function(ind_pa, ind_ap, scenarios, conf_int = FALSE) {
+combined_rr_ap_pa <- function(ind_pa, ind_ap, scenarios, input_dir, conf_int = FALSE) {
   
   # load all relative risk values
   # these are stored in global env in ITHIM, which is not ideal....
-  diseases <- fread(file.path(module_dir, "disease_outcomes_lookup.csv"))
+  diseases <- fread(file.path(input_dir, "disease_outcomes_lookup.csv"))
   
   # Replace NaNs with 1
   ind_ap[is.na(ind_ap)] <- 1

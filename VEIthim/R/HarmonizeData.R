@@ -21,12 +21,11 @@
 #' @export
 
 
-loadVEHhs <- function(model, year) {
+loadVEHhs <- function(results_dir, model, year) {
   
   # identify correct hh table within model outputs directory
-  hh_year <- paste0("Household_*", year, "*")
-  file <- Sys.glob(file.path(model, "results", "output", "*", hh_year))
-  input_dir <- file.path(model, "inputs", "ithim")  # use base model inputs
+  hh_file <- paste0("Household_", model, "_", year, ".csv")
+  file <- file.path(results_dir, hh_file)
   
   # load base model households table
   read_cols = c(
@@ -205,9 +204,10 @@ estimateVentilationRates <- function(persons, input_dir){
 hhsToPersons <- function(Hhs, input_dir, settings){
 
   # first, rename mode cols
+  mode_cols = c("auto_dist", "transit_dist", "walk_dist", "bike_dist")
   setnames(Hhs,
            c("Dvmt", "TransitPMT", "WalkPMT", "BikePMT"),
-           c("auto_dist", "transit_dist", "walk_dist", "bike_dist"))
+           mode_cols)
   
   # and convert distances to duration
   Hhs$auto_minutes <- Hhs$auto_dist / settings[name=="speed_auto"]$value * 60
