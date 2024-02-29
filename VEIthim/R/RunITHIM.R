@@ -14,7 +14,6 @@ source("R/RiskFuncsAP.R")
 source("R/RiskFuncsPA.R")
 source("R/HealthBurden.R")
 source("R/Crashes.R")
-source("R/environment.R")
 
 
 # load ithim settings and parse base, forecast years
