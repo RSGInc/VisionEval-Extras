@@ -4,15 +4,26 @@ import geopandas as gpd
 import shapely.vectorized as sv
 from pathlib import Path
 
-# root dir
-root = Path(r"C:\VE-ITHIM\input_development\fars")
+# paramerers
+GEOMETRY_FILE = "tl_2021_41_bg.shp"
+GEOMETRY_XWALK = "bzone_cbg.csv"
+FARS_YEARS = [
+    "FARS2017NationalCSV", "FARS2018NationalCSV", "FARS2019NationalCSV", "FARS2020NationalCSV", "FARS2021NationalCSV"
+    ]
 
-years = ["FARS2017NationalCSV", "FARS2018NationalCSV", "FARS2019NationalCSV", "FARS2020NationalCSV", "FARS2021NationalCSV"]
+# directories
+module_dir = Path(__file__).parent.parent
+input_dir = module_dir.joinpath("data", "fars")
+geo_dir = module_dir.joinpath("data", "geo")
+output_dir = module_dir.joinpath("inst", "extdata")
+
+# instantiate lists to store outputs
 crash = []
 person = []
-for year in years:
-    # develop with one dataset
-    data_dir = root.joinpath(year)
+for year in FARS_YEARS:
+
+    # load data year
+    data_dir = input_dir.joinpath(year)
     crash_yr = pd.read_csv(data_dir.joinpath("accident.csv"), encoding='latin-1', low_memory=False)
     person_yr = pd.read_csv(data_dir.joinpath("person.csv"), encoding='latin-1', low_memory=False)
 
@@ -23,13 +34,14 @@ for year in years:
     crash.append(crash_yr)
     person.append(person_yr)
 
+# combine years
 person = pd.concat(person, ignore_index=True)
 crash = pd.concat(crash, ignore_index=True)
 
 # isolate Oregon cases
 person = person[person.STATENAME.isin(["Oregon"])].copy()
 
-# person type to occupnat categories
+# person type to occupant categories
 mode_map = {
     "Driver of a Motor Vehicle In-Transport": "auto",
     "Passenger of a Motor Vehicle In-Transport": "auto",
@@ -56,9 +68,6 @@ other_parties = person[person.INJ_SEV!=4]
 all_fatal_cases = []
 fatal_cases = fatals.uid.unique()
 for i, uid in enumerate(fatal_cases):
-
-    if (i % 100)==0:
-        print(i, "cases complete")
 
     # subset
     case_fatals = fatals[fatals.uid==uid]
@@ -107,16 +116,19 @@ all_fatal_cases = all_fatal_cases.merge(crash[join_cols], on=["year", "ST_CASE"]
 # clean up schema
 all_fatal_cases.columns = ['year', 'case_no', 'age', 'sex', 'cas_mode', 'strike_mode', 'lat', 'lng']
 
-# finally, subset to crahses inside region
-region = gpd.read_parquet(r"C:\VE-ITHIM\input_development\boundary.parquet")
-in_region = sv.contains(region.geometry[0], all_fatal_cases.lng, all_fatal_cases.lat)
+# first, we need to establish geometry for the study region
+# for SKATS, this means using the census block group -> taz crosswalk file
+oregon_cbgs = gpd.read_file(geo_dir.joinpath(GEOMETRY_FILE))
+oregon_cbgs["GEOID"] = oregon_cbgs.GEOID.astype(np.int64)
 
-# check
-fars_gdf = all_fatal_cases.copy()
-fars_gdf["inside"] = in_region
-fars_gdf["geometry"] = gpd.points_from_xy(fars_gdf["lng"], fars_gdf["lat"], crs=region.crs)
-fars_gdf = gpd.GeoDataFrame(fars_gdf, geometry="geometry")
-fars_gdf.to_parquet(r"C:\VE-ITHIM\input_development\fars.parquet")
+# and subset to study area
+bzone_cbgs = pd.read_csv(geo_dir.joinpath(GEOMETRY_XWALK))
+keep = oregon_cbgs.GEOID.isin(bzone_cbgs.GEOID)
+oregon_cbgs = oregon_cbgs[keep].copy()
+
+# finally, subset to crahses inside region
+region = oregon_cbgs.dissolve()
+in_region = sv.contains(region.geometry[0], all_fatal_cases.lng, all_fatal_cases.lat)
 
 # isolate cases in region
 all_fatal_cases = all_fatal_cases[in_region].copy()
@@ -128,5 +140,6 @@ all_fatal_cases["strike_mode"] = np.where(recode_bike, "auto", all_fatal_cases.s
 recode_walk = ((all_fatal_cases.cas_mode=="auto") & (all_fatal_cases.strike_mode=="walk"))
 all_fatal_cases["cas_mode"] = np.where(recode_walk, "walk", all_fatal_cases.cas_mode)
 all_fatal_cases["strike_mode"] = np.where(recode_walk, "auto", all_fatal_cases.strike_mode)
-all_fatal_cases.to_csv(r"C:\VE-ITHIM\input_development\fars.csv", index=False)
 
+# write to disk
+all_fatal_cases.to_csv(output_dir.joinpath("fars2.csv"), index=False)
