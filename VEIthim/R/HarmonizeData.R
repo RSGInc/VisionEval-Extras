@@ -33,7 +33,7 @@ loadVEHhs <- function(results_dir, model, year) {
     "Age0to14", "Age15to19", "Age20to29", "Age30to54", "Age55to64", "Age65Plus",
     "Dvmt", "TransitPMT", "WalkPMT", "BikePMT"
   )
-  Hhs <- fread(file, select = read_cols)
+  Hhs <- fread(file, select=read_cols)
   
   # return Hhs table
   return(Hhs)
@@ -266,7 +266,8 @@ hhsToPersons <- function(Hhs, input_dir, settings){
   persons$PId <- 1:nrow(persons)
   
   # estimate ventilation rates and join to persons
-  ventilationRates <- estimateVentilationRates(persons, input_dir)
+  ventInputDir <- file.path(input_dir, "ithim")
+  ventilationRates <- estimateVentilationRates(persons, ventInputDir)
   
   # finally, decompose Hh travel totals to individuals
   # for now, just distribute equally across Hh members

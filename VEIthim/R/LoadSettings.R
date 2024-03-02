@@ -22,10 +22,11 @@
 loadSettings <- function(input_dir){
   
   # read settings
-  settings <- fread(file.path(input_dir, "settings.csv"))
+  settings_cols = c("name", "value")  # dont need 'description' col
+  settings <- fread(file.path(input_dir, "settings.csv"), select=settings_cols)
   
   # and config settings
-  config <- fread(file.path(input_dir, "config.csv"))
+  config <- fread(file.path(input_dir, "config.csv"), select=settings_cols)
   
   # move a couple items up a level
   base_model <- config[name=="base_model"]$value

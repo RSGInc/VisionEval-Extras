@@ -157,7 +157,7 @@ scenario_pm_calculations <- function(trips, Persons, input_dir, settings){
   #----
   # Dan: These new lines of code are for the ventilation rate
   # Dan: MET values for each mode/activity. These values come from the Compendium
-  mets <- fread(file.path(input_dir, "mets.csv"),
+  mets <- fread(file.path(input_dir, "ithim", "mets.csv"),
                 select = c("mode", "met"))
   
   # Dan: Adding MET values [dimensionless] for each mode

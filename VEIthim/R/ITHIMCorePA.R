@@ -56,7 +56,7 @@
 total_mmet <- function(persons, trips, scenarios, input_dir) {
   
   # read mets
-  mets <- fread(file.path(input_dir, "mets.csv"),
+  mets <- fread(file.path(input_dir, "ithim", "mets.csv"),
                 select = c("mode", "met"))
   
   # extract all people from the trip set with an active travel (walk or cycle) stage mode
