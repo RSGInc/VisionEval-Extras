@@ -26,7 +26,7 @@ def select_best_utm_projection(gdf):
 YEAR = 2021  # pm data year
 GEOMETRY_FILE = "tl_2021_41_bg.shp"
 GEOMETRY_XWALK = "bzone_cbg.csv"
-PM_FILE = "pm_2022.parquet"  # gis file (in this case, geoparquet) containing PM2.5 concentrations for study region
+PM_FILE = "pm.parquet"  # gis file (in this case, geoparquet) containing PM2.5 concentrations for study region
 
 # directories
 module_dir = Path(__file__).parent.parent
