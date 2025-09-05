@@ -8,8 +8,6 @@
 #'  \item get the demographic and disease burden (subset of Global Burden of Disease dataset) data
 #'    into the correct formats and join the two datasets
 #'
-#'  \item scale the burden data by the CHRONIC_DISEASE_SCALAR to account for bias in the data
-#'
 #'  \item split the above dataframe into two dataframes, one for deaths and one
 #'    for years of life lost (YLLs)
 #'
@@ -56,6 +54,8 @@
 #'
 #'
 #' @param ind_ap_pa dataframe of all individuals' relative risks for diseases
+#' @param module_dir local file path to module directory
+#' @param input_dir local file path to VE model input directory
 #' @param conf_int=F logic: whether to include confidence interval from dose response relationships or not
 #' @param combined_AP_PA=T logic: whether to combine the two exposure pathways (AP and PA) or to compute them independently
 #'
@@ -64,11 +64,11 @@
 #' @export
 
 
-health_burden <- function(ind_ap_pa, module_dir, input_dir, scenarios, conf_int = F, combined_AP_PA = T) {
+health_burden <- function(ind_ap_pa, input_dir, scenarios, conf_int = F, combined_AP_PA = T) {
   
   # load all relative risk values
   # these are stored in global env in ITHIM, which is not ideal....
-  diseases <- fread(file.path(module_dir, "disease_outcomes_lookup.csv"))
+  diseases <- fread(file.path(input_dir, "disease_outcomes_lookup.csv"))
   
   # load gbd data for region
   gbd_data <- fread(file.path(input_dir, "gbd.csv"))
@@ -126,16 +126,6 @@ health_burden <- function(ind_ap_pa, module_dir, input_dir, scenarios, conf_int 
                                    on = .(age_bin, sex),
                                    nomatch = NULL]
       disease_risk <- disease_risk[order(PId)]
-      
-      ## set up pif tables
-      # extract the relative baseline risk and demographic index
-      #pif_table <- setDT(ind_ap_pa[, colnames(ind_ap_pa) %in% c(base_var, "dem_index")])
-      # set the relative risk column name to 'outcome'
-      #setnames(pif_table, base_var, "outcome")
-      # sum the outcomes for the synthetic population by age and sex category
-      #pif_ref <- pif_table[, .(sum(outcome)), by = "dem_index"]
-      ## sort pif_ref
-      #setorder(pif_ref, dem_index) # order by age and sex category, i.e dem_index
         
       # set up naming conventions
       scen <- scenarios[2]
@@ -258,7 +248,7 @@ join_hb_and_injury <- function(hb_ap_pa, inj) {
 }
 
 
-aggregateHealthBurden <- function(healthBurden, persons, scenario, scenario_dir) {
+aggregateHealthBurden <- function(healthBurden, persons, scenario, output_dir) {
   
   # join person attributes to health burden estimates
   joincols <- c("HhId", "Bzone", "PId", "age", "sex")
@@ -289,10 +279,7 @@ aggregateHealthBurden <- function(healthBurden, persons, scenario, scenario_dir)
   zoneAgg_ylls <- healthBurden$ylls[, lapply(.SD, sum),
                                     by=.(Bzone),
                                     .SDcols=outcomes]
-  
-  # get name of output csv dir for scenario 
-  output_dir <- Sys.glob(file.path(scenario_dir, "results", "output", "*"))
-  
+
   # now, clean up schema and write each output
   # hh deaths
   names(hhAgg_deaths) <- sub(paste0(scenario, "_"), '', names(hhAgg_deaths))

@@ -1,3 +1,5 @@
+# script to help prepare PM2.5 input data required for ITHIM
+
 import math
 import numpy as np
 import pandas as pd
@@ -18,18 +20,29 @@ def select_best_utm_projection(gdf):
     return utm_crs
 
 
-# script helps prepare input data required for ITHIM
-YEAR = 2005
+## parameters
+# pm data can be obtained for https://wustl.app.box.com/v/ACAG-V5GL04-GWRPM25/folder/230744006317
+# and converted to shapefile using https://wustl.app.box.com/s/9073l0k8go8kehtxd5ok46dmw1q63oav or similar
+YEAR = 2021  # pm data year
+GEOMETRY_FILE = "tl_2021_41_bg.shp"
+GEOMETRY_XWALK = "bzone_cbg.csv"
+PM_FILE = "pm.parquet"  # gis file (in this case, geoparquet) containing PM2.5 concentrations for study region
 
-# load geometry
-oregon_cbgs = gpd.read_file(r"C:\VE-ITHIM\input_development\tl_2021_41_bg\tl_2021_41_bg.shp")
+# directories
+module_dir = Path(__file__).parent.parent
+input_dir = module_dir.joinpath("data", "pm")
+geo_dir = module_dir.joinpath("data", "geo")
+output_dir = module_dir.joinpath("inst", "extdata")
+
+# first, we need to establish geometry for the study region
+# for SKATS, this means using the census block group -> taz crosswalk file
+oregon_cbgs = gpd.read_file(geo_dir.joinpath(GEOMETRY_FILE))
 oregon_cbgs["GEOID"] = oregon_cbgs.GEOID.astype(np.int64)
 
 # and subset to study area
-bzone_cbgs = pd.read_csv(r"C:\VE-ITHIM\input_development\bzone_cbg.csv")
+bzone_cbgs = pd.read_csv(geo_dir.joinpath(GEOMETRY_XWALK))
 keep = oregon_cbgs.GEOID.isin(bzone_cbgs.GEOID)
 oregon_cbgs = oregon_cbgs[keep].copy()
-oregon_cbgs.to_parquet(r"C:\VE-ITHIM\input_development\bzone_cbg.parquet")
 
 # find and apply best projection
 projected_crs = select_best_utm_projection(oregon_cbgs)
@@ -37,7 +50,7 @@ oregon_cbgs = oregon_cbgs.to_crs(projected_crs)
 oregon_cbgs["cbg_area"] = oregon_cbgs.area
 
 # first, join PM estimates to cbgs, then allocate to bzones based on crosswalk
-pm = gpd.read_parquet(r"C:\VE-ITHIM\pm_2022.parquet")
+pm = gpd.read_parquet(input_dir.joinpath(PM_FILE))
 pm = pm.explode(ignore_index=True, index_parts=False).to_crs(projected_crs)
 if not pm.has_sindex:
     pm.sindex
@@ -49,7 +62,9 @@ pm_cbg = pm.sjoin(oregon_cbgs, how="inner")
 pm_cbg = pm_cbg.rename(columns={"geometry": "joined_geometry"})
 
 # merge cell geometry so we can calculate intersecting area
-pm_cbg = pd.DataFrame(pm_cbg).merge(oregon_cbgs[["geometry"]], left_on="index_right", right_index=True)
+pm_cbg = pd.DataFrame(pm_cbg).merge(oregon_cbgs[["geometry"]],
+                                    left_on="index_right",
+                                    right_index=True)
 pm_cbg = pm_cbg.rename(columns={"index_right": "cbg_id"})
 
 # geopandas intersecton 
@@ -85,4 +100,4 @@ bzone_cbgs["PM25"] = bzone_cbgs.pm / bzone_cbgs.pct_area
 bzone_cbgs["Geo"] = bzone_cbgs.index  # bzone ID is currently index
 bzone_cbgs["Year"] = YEAR
 write_cols = ["Geo", "Year", "PM25"]
-bzone_cbgs[write_cols].to_csv(r"C:\VE-ITHIM\input_development\bzone_pm.csv", index=False)
+bzone_cbgs[write_cols].to_csv(output_dir.joinpath("bzone_pm.csv", index=False))

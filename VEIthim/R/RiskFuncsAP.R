@@ -1,6 +1,6 @@
 #' Get relative risk for diseases given PM exposure
 #'
-#' Computes the relative risk (RR) for individuals in the synthetic population for each disease given PM exposure
+#' Computes the relative risk (RR) for persons for each disease given PM exposure
 #'
 #' This function performs the following steps:
 #' \itemize{
@@ -118,12 +118,12 @@ AP_dose_response <- function(cause, rr_values, dose, quantile = 0.5, confidence_
 }
 
 
-gen_ap_rr <- function(pm_conc_pp, scenarios, module_dir) {
+gen_ap_rr <- function(pm_conc_pp, scenarios, input_dir) {
   pm_rr_pp <- pm_conc_pp
   
   # load air pollution relative risk values
   # these are stored in global env in ITHIM, which is not ideal....
-  diseases <- fread(file.path(module_dir, "disease_outcomes_lookup.csv"))
+  diseases <- fread(file.path(input_dir, "disease_outcomes_lookup.csv"))
   diseases <- diseases[air_pollution==1]  # isolate AP pathway
   
   ## assigning air pollution age bands to the individual level data
@@ -192,7 +192,7 @@ gen_ap_rr <- function(pm_conc_pp, scenarios, module_dir) {
       for (x in 1:length(scenarios)) { # loop through scenarios
         
         # load relative risk values
-        cause_rr <- fread(file.path(module_dir, "drap", "extdata", paste0(cause_age, ".csv")))
+        cause_rr <- fread(file.path(input_dir, "drap", "extdata", paste0(cause_age, ".csv")))
         
         # call AP_dose_response.R function to calculate the relative risk for that disease, age, dose and quantile
         # only apply to people in synthetic population with assigned index i (based on age)

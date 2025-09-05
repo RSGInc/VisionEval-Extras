@@ -21,12 +21,11 @@
 #' @export
 
 
-loadVEHhs <- function(model, year) {
+loadVEHhs <- function(results_dir, model, year) {
   
   # identify correct hh table within model outputs directory
-  hh_year <- paste0("Household_*", year, "*")
-  file <- Sys.glob(file.path(model, "results", "output", "*", hh_year))
-  input_dir <- file.path(model, "inputs", "ithim")  # use base model inputs
+  hh_file <- paste0("Household_", model, "_", year, ".csv")
+  file <- file.path(results_dir, hh_file)
   
   # load base model households table
   read_cols = c(
@@ -34,7 +33,7 @@ loadVEHhs <- function(model, year) {
     "Age0to14", "Age15to19", "Age20to29", "Age30to54", "Age55to64", "Age65Plus",
     "Dvmt", "TransitPMT", "WalkPMT", "BikePMT"
   )
-  Hhs <- fread(file, select = read_cols)
+  Hhs <- fread(file, select=read_cols)
   
   # return Hhs table
   return(Hhs)
@@ -205,9 +204,10 @@ estimateVentilationRates <- function(persons, input_dir){
 hhsToPersons <- function(Hhs, input_dir, settings){
 
   # first, rename mode cols
+  mode_cols = c("auto_dist", "transit_dist", "walk_dist", "bike_dist")
   setnames(Hhs,
            c("Dvmt", "TransitPMT", "WalkPMT", "BikePMT"),
-           c("auto_dist", "transit_dist", "walk_dist", "bike_dist"))
+           mode_cols)
   
   # and convert distances to duration
   Hhs$auto_minutes <- Hhs$auto_dist / settings[name=="speed_auto"]$value * 60
@@ -266,7 +266,8 @@ hhsToPersons <- function(Hhs, input_dir, settings){
   persons$PId <- 1:nrow(persons)
   
   # estimate ventilation rates and join to persons
-  ventilationRates <- estimateVentilationRates(persons, input_dir)
+  ventInputDir <- file.path(input_dir, "ithim")
+  ventilationRates <- estimateVentilationRates(persons, ventInputDir)
   
   # finally, decompose Hh travel totals to individuals
   # for now, just distribute equally across Hh members
